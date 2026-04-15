@@ -13,8 +13,6 @@ dependencies = [
     "numpy",
     "xarray",
     "scipy",
-    "sasktran2",
-    "hawcsimulator",
 ]
 
 [project.optional-dependencies]

@@ -3,16 +3,14 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - sasktran2
+  - sasktran2        # installed from conda-forge — do NOT pip install, requires compilation
   - xarray
   - scipy
   - numpy
   - matplotlib
   - pandas
   - cartopy
-  - notebook
-  - numba        # required by hawcsimulator; conda-forge version avoids llvmlite issues
+  - numba
   - pip
   - pip:
-    - hawcsimulator
-    - cesm-hawc   # install this package in editable mode after cloning
+    - hawcsimulator  # pure Python, safe to install from PyPI

@@ -54,34 +54,15 @@ pip install -e .
 
 **Alliance Canada HPC (Fir/Rorqual/Narval):**
 
-sasktran2 has a Rust extension that must be compiled from source. Do this once:
-
 ```bash
-# Step 1: compile wheels (5–15 min, run on a login node)
-bash scripts/setup/build_wheels.sh
-
-# Step 2: create the working environment from those wheels
+git clone https://github.com/torimcd/cesm-hawc
+cd cesm-hawc
 bash scripts/setup/create_env.sh
-
-# Step 3: edit file paths in scripts/run_simulation.py, then submit
-sbatch slurm/submit.sh
 ```
 
-### A note on dependencies
+That script creates the `hawc_env` micromamba environment, installs all
+dependencies, and registers the package. It takes 5–10 minutes on first run.
 
-`pyproject.toml` intentionally does not list `sasktran2` or `hawcsimulator` as
-dependencies, even though the package requires both at runtime. This is because
-both packages require compilation from source and cannot be resolved through
-PyPI on Alliance HPC — doing so would hit disk quotas and fail. Instead they
-are installed manually via pre-built wheels in the setup scripts above.
-
-If you are installing in a standard environment where PyPI access and sufficient
-disk space are available, install them separately before running `pip install -e .`:
-
-```bash
-pip install sasktran2 hawcsimulator
-pip install -e .
-```
 
 ## Required WACCM output variables
 

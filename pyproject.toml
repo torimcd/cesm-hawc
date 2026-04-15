@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "cesm-hawc-ali"
+version = "0.1.0"
+description = "Feed CESM2/WACCM output into the HAWC ALI limb imager simulator"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "xarray",
+    "scipy",
+    "sasktran2",
+    "hawcsimulator",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "jupyter", "matplotlib", "pandas", "cartopy"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -63,6 +63,12 @@ bash scripts/setup/create_env.sh
 That script creates the `hawc_env` micromamba environment, installs all
 dependencies, and registers the package. It takes 5–10 minutes on first run.
 
+Then edit the file paths in `scripts/run_simulation.py` and submit:
+
+```bash
+sbatch slurm/submit.sh
+```
+
 
 ## Required WACCM output variables
 

@@ -29,6 +29,7 @@ micromamba create -n hawc_env -c conda-forge \
     pandas \
     cartopy \
     numba \
+    dask \
     -y
 
 micromamba activate hawc_env

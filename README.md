@@ -45,7 +45,7 @@ print(result["delta_burden_mg_m2"])           # mg SO₄ m⁻²
 
 **Local (Linux/Mac):**
 ```bash
-git clone https://github.com/yourname/cesm-hawc
+git clone https://github.com/torimcd/cesm-hawc
 cd cesm-hawc
 micromamba env create -f environment.yml
 micromamba activate hawc_env
@@ -64,7 +64,23 @@ bash scripts/setup/build_wheels.sh
 bash scripts/setup/create_env.sh
 
 # Step 3: edit file paths in scripts/run_simulation.py, then submit
-sbatch scripts/submit.sh
+sbatch slurm/submit.sh
+```
+
+### A note on dependencies
+
+`pyproject.toml` intentionally does not list `sasktran2` or `hawcsimulator` as
+dependencies, even though the package requires both at runtime. This is because
+both packages require compilation from source and cannot be resolved through
+PyPI on Alliance HPC — doing so would hit disk quotas and fail. Instead they
+are installed manually via pre-built wheels in the setup scripts above.
+
+If you are installing in a standard environment where PyPI access and sufficient
+disk space are available, install them separately before running `pip install -e .`:
+
+```bash
+pip install sasktran2 hawcsimulator
+pip install -e .
 ```
 
 ## Required WACCM output variables

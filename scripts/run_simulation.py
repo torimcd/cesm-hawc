@@ -22,8 +22,10 @@ import pandas as pd
 import xarray as xr
 from scipy.interpolate import interp1d
 
-from src.cesm_hawc import WACCMAtmosphere, build_waccm_constituents
-from src.cesm_hawc.waccm import R_DRY, R_H2O, hybrid_to_pressure, pressure_to_altitude
+from cesm_hawc.waccm import WACCMAtmosphere
+from cesm_hawc.constituents import build_waccm_constituents
+from cesm_hawc.waccm import R_DRY, R_H2O, hybrid_to_pressure, pressure_to_altitude
+
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────

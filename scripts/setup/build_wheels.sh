@@ -20,8 +20,10 @@ WHEEL_DIR="$HOME/wheels"
 mkdir -p "$WHEEL_DIR"
 
 echo "=== Loading build modules ==="
+# StdEnv/2023 already provides gcc, flexiblas, openblas — do not purge or
+# reload the standard environment. Only add cmake and rust on top.
 module load python/3.11
-module load gcc cmake rust   # required to compile sasktran2's Rust extension
+module load cmake rust
 
 echo "=== Creating temporary build environment ==="
 TMPENV="/tmp/build_env_$$"

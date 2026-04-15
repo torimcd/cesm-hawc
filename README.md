@@ -82,11 +82,3 @@ Add these to `fincl` in `user_nl_cam` if not already present:
 | `num_a1`, `num_a3` | Aerosol number mixing ratio (#/kg) |
 
 See [docs/waccm_variables.md](docs/waccm_variables.md) for the full list.
-
-## Physics notes
-
-- MAM4 coarse mode σ_g = 1.2 (WACCM-specific; Mills et al. 2016)
-- The ALI Mie database (`aerosol_median_radius_db()`) is used for all
-  optical calculations, ensuring consistency with the ALI retrieval algorithm
-- The `atmosphere_method="default"` Hamilton config is used; `"omps_calipso_era5"`
-  requires network access and will crash on compute nodes

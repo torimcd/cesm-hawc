@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from cesm_hawc.waccm import WACCMAtmosphere
-from cesm_hawc.constituents import build_waccm_constituents
+from src.cesm_hawc.waccm import WACCMAtmosphere
+from src.cesm_hawc.constituents import build_waccm_constituents
 
 try:
     from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator

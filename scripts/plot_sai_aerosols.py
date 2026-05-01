@@ -58,8 +58,9 @@ def hybrid_to_pressure(ds, ps_name="PS"):
     hybm = ds["hybm"]             # (lev,)
     PS   = ds[ps_name]            # (time, lat, lon)
     # broadcast: P = A*P0 + B*PS
-    pres = hyam * P0 + hybm * PS  # (time, lev, lat, lon)
-    return np.asarray(pres)       # Pa, numpy array
+    pres = hyam * P0 + hybm * PS
+    pres = pres.transpose("time", "lev", "lat", "lon")
+    return np.asarray(pres)       # Pa, numpy array (time, lev, lat, lon)
 
 
 def pressure_level_interp(field, pres, target_hPa):

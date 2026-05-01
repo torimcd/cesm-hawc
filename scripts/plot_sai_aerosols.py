@@ -44,7 +44,7 @@ def load_h0(archivedir, casename, pattern="*.cam.h0.*.nc"):
         sys.exit(f"No h0 files found at: {path}")
     print(f"Loading {len(files)} h0 file(s) for {casename}")
     time_coder = xr.coders.CFDatetimeCoder(use_cftime=True)
-    ds = xr.open_mfdataset(files, combine="by_coords", decode_times=time_coder)
+    ds = xr.open_mfdataset(files, combine="by_coords", decode_times=time_coder, data_vars="minimal", coords="minimal", compat="override")
     return ds
 
 
@@ -53,9 +53,9 @@ def hybrid_to_pressure(ds, ps_name="PS"):
     Compute 3-D pressure field (Pa) from hybrid sigma coefficients.
     Returns pressure array with dims (time, lev, lat, lon).
     """
-    P0 = float(ds["P0"])          # reference pressure in Pa
-    hyam = ds["hyam"]             # (lev,)
-    hybm = ds["hybm"]             # (lev,)
+    P0 = float(np.asarray(ds["P0"]).flat[0])  # reference pressure in Pa
+    hyam = ds["hyam"].isel(time=0) if "time" in ds["hyam"].dims else ds["hyam"]
+    hybm = ds["hybm"].isel(time=0) if "time" in ds["hybm"].dims else ds["hybm"]
     PS   = ds[ps_name]            # (time, lat, lon)
     # broadcast: P = A*P0 + B*PS
     pres = hyam * P0 + hybm * PS

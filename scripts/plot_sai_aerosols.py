@@ -43,7 +43,8 @@ def load_h0(archivedir, casename, pattern="*.cam.h0.*.nc"):
     if not files:
         sys.exit(f"No h0 files found at: {path}")
     print(f"Loading {len(files)} h0 file(s) for {casename}")
-    ds = xr.open_mfdataset(files, combine="by_coords", use_cftime=True)
+    time_coder = xr.coders.CFDatetimeCoder(use_cftime=True)
+    ds = xr.open_mfdataset(files, combine="by_coords", decode_times=time_coder)
     return ds
 
 
@@ -58,7 +59,7 @@ def hybrid_to_pressure(ds, ps_name="PS"):
     PS   = ds[ps_name]            # (time, lat, lon)
     # broadcast: P = A*P0 + B*PS
     pres = hyam * P0 + hybm * PS  # (time, lev, lat, lon)
-    return pres                   # Pa
+    return np.asarray(pres)       # Pa, numpy array
 
 
 def pressure_level_interp(field, pres, target_hPa):
@@ -99,12 +100,13 @@ def column_burden(ds, varname, pres):
     """
     Compute column burden (kg/m2) of a mixing ratio (kg/kg) field by
     integrating over pressure:  integral( q * dp / g )
-    pres: (time, lev, lat, lon) in Pa
+    pres: numpy array (time, lev, lat, lon) in Pa
     """
     g = 9.80665  # m/s^2
-    q = ds[varname].values          # (time, lev, lat, lon)
-    # dp on each level (positive downward → thick from below to above)
-    dp = np.diff(pres, axis=1)      # (time, lev-1, lat, lon)
+    q = np.asarray(ds[varname])          # (time, lev, lat, lon)
+    p = np.asarray(pres)                 # ensure numpy, same shape
+    # dp between adjacent levels along axis=1
+    dp = np.diff(p, axis=1)              # (time, lev-1, lat, lon)
     # mid-level q for integration
     q_mid = 0.5 * (q[:, :-1, :, :] + q[:, 1:, :, :])
     burden = np.sum(q_mid * np.abs(dp) / g, axis=1)  # (time, lat, lon)
@@ -457,7 +459,7 @@ def main():
     # ── load data ──────────────────────────────────────────────────────────────
     print(f"\nLoading case: {args.case}")
     ds = load_h0(args.archivedir, args.case)
-    pres = hybrid_to_pressure(ds).values   # (time, lev, lat, lon) Pa
+    pres = hybrid_to_pressure(ds)   # (time, lev, lat, lon) Pa, numpy array
 
     suffix = f"_{args.case}"
 
@@ -488,7 +490,7 @@ def main():
     if args.bgcase:
         print(f"\nLoading background case: {args.bgcase}")
         ds_bg   = load_h0(args.archivedir, args.bgcase)
-        pres_bg = hybrid_to_pressure(ds_bg).values
+        pres_bg = hybrid_to_pressure(ds_bg)
 
         print("Producing injection − background difference figures...")
         for t in range(ntimes):

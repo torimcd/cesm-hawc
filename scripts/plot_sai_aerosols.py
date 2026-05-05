@@ -7,6 +7,14 @@ comparable to those in Sellitto et al. (2026, egusphere-2026-919).
 
 Usage:
     python plot_sai_aerosols.py --case sai_background_2035_001 \
+                                --archivedir ~/projects/data/cesm_output \
+                                --outdir ./figures
+
+    python plot_sai_aerosols.py --case sai_1.0Tg_2035_001 \
+                                --archivedir ~/projects/data/cesm_output \
+                                --outdir ./figures
+
+    python plot_sai_aerosols.py --case sai_background_2035_001 \
                                 --archivedir /scratch/vmcd/cesm/output/archive \
                                 --outdir ./figures
 
@@ -38,7 +46,8 @@ from matplotlib.colors import TwoSlopeNorm
 
 def load_h0(archivedir, casename, pattern="*.cam.h0.*.nc"):
     """Load all monthly-mean h0 files for a case into a single xarray Dataset."""
-    path = os.path.join(archivedir, casename, "atm", "hist", pattern)
+    path = os.path.join(archivedir, casename, pattern)
+    #path = os.path.join(archivedir, casename, "atm", "hist", pattern)
     files = sorted(glob.glob(path))
     if not files:
         sys.exit(f"No h0 files found at: {path}")

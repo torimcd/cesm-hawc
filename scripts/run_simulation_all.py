@@ -53,7 +53,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from cesm_hawc import WACCMAtmosphere, build_waccm_constituents
+from cesm_hawc.waccm import WACCMAtmosphere
+from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────

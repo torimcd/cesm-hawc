@@ -192,7 +192,7 @@ def fig_so2_map(ds, pres, level_hPa=25.0, outdir=".", suffix=""):
         ax.add_feature(cfeature.BORDERS,   linewidth=0.2)
         im = ax.pcolormesh(lon, lat, data_ppb[t],
                            transform=ccrs.PlateCarree(),
-                           cmap="YlOrRd", vmin=0, vmax=vmax)
+                           cmap="PuRd", vmin=0, vmax=0.5)
         ax.set_title(time_labels[t], fontsize=9)
         ims.append(im)
 
@@ -232,7 +232,7 @@ def fig_so4_burden_map(ds, pres, outdir=".", suffix=""):
         ax.add_feature(cfeature.COASTLINE, linewidth=0.4)
         im = ax.pcolormesh(lon, lat, total[t],
                            transform=ccrs.PlateCarree(),
-                           cmap="viridis", vmin=0, vmax=vmax)
+                           cmap="PuBu", vmin=0, vmax=0.025)
         ax.set_title(time_labels[t], fontsize=9)
         ims.append(im)
 

@@ -172,7 +172,7 @@ def _strat_burden(ext: np.ndarray, alts_km: np.ndarray) -> float:
     mask = alts_km >= STRAT_MIN_KM
     if mask.sum() < 2:
         return np.nan
-    return float(np.trapz(ext[mask], alts_km[mask]))
+    return float(np.trapezoid(ext[mask], alts_km[mask]))
 
 
 # ── Figures 1–3: ALI L2 results (multi-panel, one subplot per month) ──────────

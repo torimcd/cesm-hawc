@@ -2,7 +2,7 @@
 # submit.sh — SLURM batch script for Alliance Canada clusters (Fir/Rorqual/Narval)
 #
 # Edit ACCOUNT, MAIL, and the paths in run_simulation.py, then submit:
-#   sbatch slurm/submit.sh
+#   sbatch submit.sh
 #
 #SBATCH --job-name=waccm_ali
 #SBATCH --account=def-yourPI          # ← change to your PI's allocation account

@@ -56,6 +56,7 @@ import pandas as pd
 from cesm_hawc.waccm import WACCMAtmosphere
 from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
 
@@ -77,8 +78,17 @@ TANGENT_LON = 180.0   # degrees
 SZA_DEG     = 60.0
 SAA_DEG     = 0.0
 
+# Which ALI simulator to use: "ideal" or "full"
+# "full" requires: pip install ali_l1 -f https://arg.usask.ca/wheels/
+SIMULATOR = "ideal"
+
 # ALI sample wavelengths [nm]
-ALI_WAVELENGTHS = np.array([470.0, 745.0, 1020.0])
+# For "ideal": [470, 745, 1020] for dev; [470,525,745,1020,1230,1450,1500] for production.
+# For "full":  fixed 11 instrument bands (610–1560 nm), set by detector design.
+ALI_WAVELENGTHS = {
+    "ideal": np.array([470.0, 745.0, 1020.0]),
+    "full":  np.array([610., 676., 755., 869., 950., 1022., 1080., 1225., 1360., 1450., 1560.]),
+}[SIMULATOR]
 
 # Altitude grid [m]
 ALT_GRID_M = np.arange(0.0, 65001.0, 1000.0)
@@ -137,16 +147,18 @@ def _collect_files(directory: str, pattern: str,
 
 def _build_sim_input(obs_time_str: str) -> dict:
     """Return the geometry/instrument dict shared by all simulations."""
-    return {
+    sim_input = {
         "tangent_latitude":            TANGENT_LAT,
         "tangent_longitude":           TANGENT_LON,
         "tangent_solar_zenith_angle":  SZA_DEG,
         "tangent_solar_azimuth_angle": SAA_DEG,
         "altitude_grid":               ALT_GRID_M,
-        "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          ALI_WAVELENGTHS,
         "time":                        pd.Timestamp(obs_time_str),
     }
+    if SIMULATOR == "ideal":
+        sim_input["polarization_states"] = ["I", "dolp"]
+    return sim_input
 
 
 def _save_cesm_extinction(profiles: dict, alt_m: np.ndarray,
@@ -209,7 +221,7 @@ def process_month(
         # mid-month time for the geometry calculation
         obs_time = f"{date}-15T12:00:00Z"
         sim_input = _build_sim_input(obs_time)
-        simulator = IdealALISimulator()   # instantiate fresh per worker
+        sim_obj = IdealALISimulator() if SIMULATOR == "ideal" else ALIPhase0Simulator()
 
         # ── background ──────────────────────────────────────────────────────
         bg_out = os.path.join(out_root, "background", date)
@@ -221,7 +233,7 @@ def process_month(
                                                     TIME_IDX)
 
         log.info("[%s] Running background simulation...", date)
-        data_bg = simulator.run(
+        data_bg = sim_obj.run(
             ["l2", "sk2_atmosphere"],
             {**sim_input,
              "constituents": build_waccm_constituents(profiles_bg, ALT_GRID_M)},
@@ -252,7 +264,7 @@ def process_month(
                                                           TIME_IDX)
 
             log.info("[%s] Running injection simulation...", date)
-            data_inj = simulator.run(
+            data_inj = sim_obj.run(
                 ["l2", "sk2_atmosphere"],
                 {**sim_input,
                  "constituents": build_waccm_constituents(profiles_inj,

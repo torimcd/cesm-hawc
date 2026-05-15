@@ -27,7 +27,6 @@ from cesm_hawc.constituents import build_waccm_constituents
 from cesm_hawc.waccm import R_DRY, R_H2O, hybrid_to_pressure, pressure_to_altitude
 
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
-from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────
 
@@ -66,7 +65,11 @@ OUT_DIR = os.path.expanduser("~/results/hawc_ali/")
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    sim_obj = IdealALISimulator() if SIMULATOR == "ideal" else ALIPhase0Simulator()
+    if SIMULATOR == "full":
+        from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
+        sim_obj = ALIPhase0Simulator()
+    else:
+        sim_obj = IdealALISimulator()
     sim_input = {
         "tangent_latitude":            TANGENT_LAT,
         "tangent_longitude":           TANGENT_LON,

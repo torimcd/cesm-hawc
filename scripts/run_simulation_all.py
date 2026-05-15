@@ -56,7 +56,6 @@ import pandas as pd
 from cesm_hawc.waccm import WACCMAtmosphere
 from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
-from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
 
@@ -221,7 +220,11 @@ def process_month(
         # mid-month time for the geometry calculation
         obs_time = f"{date}-15T12:00:00Z"
         sim_input = _build_sim_input(obs_time)
-        sim_obj = IdealALISimulator() if SIMULATOR == "ideal" else ALIPhase0Simulator()
+        if SIMULATOR == "full":
+            from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
+            sim_obj = ALIPhase0Simulator()
+        else:
+            sim_obj = IdealALISimulator()
 
         # ── background ──────────────────────────────────────────────────────
         bg_out = os.path.join(out_root, "background", date)

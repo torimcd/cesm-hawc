@@ -15,7 +15,6 @@ from cesm_hawc.constituents import build_waccm_constituents
 
 try:
     from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
-    from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
 except ImportError as e:
     raise ImportError("hawcsimulator must be installed: pip install hawcsimulator") from e
 
@@ -93,6 +92,7 @@ def run_ali_simulation(
         obs_time = pd.Timestamp(obs_time)
 
     if simulator == "full":
+        from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
         sim_obj = ALIPhase0Simulator()
         if wavelengths_nm is None:
             wavelengths_nm = _FULL_WAVELENGTHS

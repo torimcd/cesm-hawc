@@ -263,6 +263,10 @@ def fig1_extinction_profiles(months: list[str], out_dir: str) -> None:
         if idx == 0:
             ax_ext.legend(fontsize=7)
 
+        for _ds in (l2_bg, l2_inj, cesm_bg, cesm_inj):
+            if _ds is not None:
+                _ds.close()
+
     fig.suptitle("Fig 1 — ALI retrieved aerosol extinction & median radius",
                  fontsize=13)
     _save(fig, out_dir, "fig1_extinction_profiles.png")
@@ -308,6 +312,10 @@ def fig2_anomaly(months: list[str], out_dir: str) -> None:
         ax.set_title(date, fontsize=9)
         if idx == 0:
             ax.legend(fontsize=7)
+
+        for _ds in (l2_bg, l2_inj):
+            if _ds is not None:
+                _ds.close()
 
     fig.suptitle("Fig 2 — Extinction anomaly: Injection − Background", fontsize=13)
     _save(fig, out_dir, "fig2_anomaly.png")
@@ -371,6 +379,10 @@ def fig3_retrieval_diagnostics(months: list[str], out_dir: str) -> None:
         if idx == 0:
             ax_prof.legend(fontsize=7)
             ax_sigma.legend(fontsize=7)
+
+        for _ds in (l2_bg, l2_inj):
+            if _ds is not None:
+                _ds.close()
 
     fig.suptitle("Fig 3 — Retrieval diagnostics: prior vs retrieved & uncertainty",
                  fontsize=13)
@@ -659,6 +671,10 @@ def fig_ts_summary(months: list[str], out_dir: str) -> None:
             radius_inj.append(np.nan)
             anom_peak.append(np.nan)
 
+        l2_bg.close()
+        if l2_inj is not None:
+            l2_inj.close()
+
     if not dates:
         print("No months loaded — skipping time-series summary.")
         return
@@ -745,8 +761,14 @@ def main() -> None:
                     pass
 
             figA_profile_timeseries(ds_bg, ds_inj, months, out_dir, l2_data)
+            for _bg, _inj in l2_data.values():
+                _bg.close()
+                if _inj is not None:
+                    _inj.close()
             figB_aod_timeseries(ds_bg, ds_inj, out_dir)
             figC_hovmoller(ds_bg, ds_inj, out_dir)
+            ds_bg.close()
+            ds_inj.close()
 
         except FileNotFoundError as e:
             print(f"  Skipping Figures A–C: {e}")

@@ -1,0 +1,39 @@
+# config.example.toml — committed template
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to config.toml (same directory) and fill in your paths.
+# config.toml is gitignored so local and HPC paths stay out of the repo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Single-month run (scripts/run_simulation.py) ──────────────────────────
+[single]
+waccm_background = "/path/to/background.cam.h0.YYYY-MM.nc"
+waccm_injection  = ""              # leave empty ("") to skip injection run
+time_idx         = 0              # time slice index within the file
+obs_time         = "2035-02-01T12:00:00Z"
+out_dir          = "~/results/hawc_ali/"
+
+# ── Batch run (scripts/run_simulation_all.py) ─────────────────────────────
+[batch]
+waccm_background_dir = "/path/to/background/atm/hist/"
+waccm_injection_dir  = ""          # leave empty ("") to skip injection run
+h0_pattern           = "*.cam.h0.*.nc"
+month_filter         = []          # e.g. ["2034-01", "2034-02"]; [] = all months
+out_dir              = "~/results/hawc_ali/"
+n_workers            = 4          # parallel worker processes; 1 = serial
+
+# ── Observation geometry (shared by both scripts) ─────────────────────────
+[geometry]
+tangent_lat = 30.6    # degrees — match your SO₂ injection latitude
+tangent_lon = 180.0   # degrees
+sza_deg     = 60.0
+saa_deg     = 0.0
+
+# ── ALI instrument configuration (shared by both scripts) ─────────────────
+[instrument]
+# Wavelengths for the ideal spectrograph simulator [nm].
+# 3-channel quickstart (fast):  [470.0, 745.0, 1020.0]
+# Extended production set:      [470.0, 525.0, 745.0, 1020.0, 1230.0, 1450.0, 1500.0]
+wavelengths_nm   = [470.0, 745.0, 1020.0]
+alt_grid_start_m = 0.0
+alt_grid_stop_m  = 65000.0   # inclusive upper bound [m]
+alt_grid_step_m  = 1000.0

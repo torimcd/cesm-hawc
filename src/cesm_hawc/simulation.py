@@ -18,9 +18,6 @@ try:
 except ImportError as e:
     raise ImportError("hawcsimulator must be installed: pip install hawcsimulator") from e
 
-_IDEAL_WAVELENGTHS = np.array([470.0, 745.0, 1020.0])
-_FULL_WAVELENGTHS  = np.array([610., 676., 755., 869., 950., 1022., 1080., 1225., 1360., 1450., 1560.])
-
 
 def run_ali_simulation(
     background_file: str,
@@ -31,12 +28,11 @@ def run_ali_simulation(
     sza_deg: float = 60.0,
     saa_deg: float = 0.0,
     obs_time: str | pd.Timestamp = "2035-01-01T12:00:00Z",
-    simulator: str = "ideal",
     wavelengths_nm: np.ndarray | None = None,
     alt_grid_m: np.ndarray | None = None,
 ) -> dict:
     """
-    Run the HAWC ALI simulator on a WACCM background and optional
+    Run the HAWC IdealALISimulator on a WACCM background and optional
     injection scenario, and return a summary of retrieved quantities.
 
     Parameters
@@ -53,16 +49,9 @@ def run_ali_simulation(
         Solar zenith and azimuth angles [degrees].
     obs_time : str or pd.Timestamp
         Observation time (used for solar position in the simulator).
-    simulator : str, optional
-        Which ALI simulator to use: ``"ideal"`` (default) or ``"full"``.
-        ``"ideal"`` uses IdealALISimulator (direct Stokes + Gaussian noise).
-        ``"full"`` uses ALIPhase0Simulator (realistic L1A→L1B via ali_l1;
-        requires ``pip install ali_l1 -f https://arg.usask.ca/wheels/``).
     wavelengths_nm : array, optional
         ALI sample wavelengths [nm].
-        Default: [470, 745, 1020] nm for ``"ideal"``;
-                 [610, 676, 755, 869, 950, 1022, 1080, 1225, 1360, 1450, 1560] nm
-                 for ``"full"`` (fixed by instrument design).
+        Default: [470, 745, 1020] nm (quickstart channels).
     alt_grid_m : array, optional
         Altitude grid [m]. Default: 0–65 km in 1 km steps.
 
@@ -86,38 +75,31 @@ def run_ali_simulation(
     ... )
     >>> print(f"Peak extinction anomaly: {result['peak_extinction_anomaly_m']:.2e} m⁻¹")
     """
+    if wavelengths_nm is None:
+        wavelengths_nm = np.array([470.0, 745.0, 1020.0])
     if alt_grid_m is None:
         alt_grid_m = np.arange(0.0, 65001.0, 1000.0)
     if not isinstance(obs_time, pd.Timestamp):
         obs_time = pd.Timestamp(obs_time)
 
-    if simulator == "full":
-        from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
-        sim_obj = ALIPhase0Simulator()
-        if wavelengths_nm is None:
-            wavelengths_nm = _FULL_WAVELENGTHS
-    else:
-        sim_obj = IdealALISimulator()
-        if wavelengths_nm is None:
-            wavelengths_nm = _IDEAL_WAVELENGTHS
+    simulator = IdealALISimulator()
 
     sim_input = {
-        "tangent_latitude":            lat,
-        "tangent_longitude":           lon,
+        "tangent_latitude":           lat,
+        "tangent_longitude":          lon,
         "tangent_solar_zenith_angle":  sza_deg,
         "tangent_solar_azimuth_angle": saa_deg,
         "altitude_grid":               alt_grid_m,
+        "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          wavelengths_nm,
         "time":                        obs_time,
     }
-    if simulator == "ideal":
-        sim_input["polarization_states"] = ["I", "dolp"]
 
     # ── Background ────────────────────────────────────────────────────────
     waccm_bg   = WACCMAtmosphere(background_file, alt_grid_km=alt_grid_m / 1e3)
     profiles_bg = waccm_bg.get_column_profiles(lat, lon, time_index)
-    data_bg    = sim_obj.run(
-        ["l2", "sk2_atmosphere"],
+    data_bg    = simulator.run(
+        ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
         {**sim_input, "constituents": build_waccm_constituents(profiles_bg, alt_grid_m)},
     )
     burden_bg = waccm_bg.sulfate_column_burden(lat, lon, time_index)
@@ -127,8 +109,8 @@ def run_ali_simulation(
     if injection_file is not None:
         waccm_inj    = WACCMAtmosphere(injection_file, alt_grid_km=alt_grid_m / 1e3)
         profiles_inj = waccm_inj.get_column_profiles(lat, lon, time_index)
-        data_inj     = sim_obj.run(
-            ["l2", "sk2_atmosphere"],
+        data_inj     = simulator.run(
+            ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
             {**sim_input,
              "constituents": build_waccm_constituents(profiles_inj, alt_grid_m)},
         )

@@ -16,6 +16,16 @@ or submit via SLURM:
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        sys.exit("Python < 3.11 requires tomli: pip install tomli")
 
 import numpy as np
 import pandas as pd
@@ -29,35 +39,40 @@ from cesm_hawc.waccm import R_DRY, R_H2O, hybrid_to_pressure, pressure_to_altitu
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────
+# Edit config.toml at the project root (gitignored).
+# Copy config.example.toml → config.toml to get started.
 
-# Which ALI simulator to use: "ideal" or "full"
-# "full" requires: pip install ali_l1 -f https://arg.usask.ca/wheels/
-SIMULATOR = "ideal"
+_CONFIG = Path(__file__).parent.parent / "config.toml"
+if not _CONFIG.exists():
+    sys.exit(
+        f"config.toml not found at {_CONFIG}\n"
+        "Copy config.example.toml → config.toml and fill in your paths."
+    )
+with open(_CONFIG, "rb") as _f:
+    _cfg = tomllib.load(_f)
 
-WACCM_BACKGROUND = "/path/to/background.cam.h0.YYYY-MM.nc"
-WACCM_INJECTION  = "/path/to/injection.cam.h0.YYYY-MM.nc"   # set None to skip
-TIME_IDX         = 0   # time slice index within the file
+_s   = _cfg["single"]
+_geo = _cfg["geometry"]
+_ins = _cfg["instrument"]
 
-# Observation geometry — match your SO₂ injection latitude
-TANGENT_LAT = 30.6    # degrees
-TANGENT_LON = 180.0   # degrees
-SZA_DEG     = 60.0
-SAA_DEG     = 0.0
-OBS_TIME    = "2035-02-01T12:00:00Z"
+WACCM_BACKGROUND = _s["waccm_background"]
+WACCM_INJECTION  = _s["waccm_injection"] or None
+TIME_IDX         = _s["time_idx"]
+OBS_TIME         = _s["obs_time"]
 
-# ALI sample wavelengths [nm]
-# For "ideal": [470, 745, 1020] for dev; [470,525,745,1020,1230,1450,1500] for production.
-# For "full":  fixed 11 instrument bands (610–1560 nm), set by detector design.
-ALI_WAVELENGTHS = {
-    "ideal": np.array([470.0, 745.0, 1020.0]),
-    "full":  np.array([610., 676., 755., 869., 950., 1022., 1080., 1225., 1360., 1450., 1560.]),
-}[SIMULATOR]
+TANGENT_LAT = _geo["tangent_lat"]
+TANGENT_LON = _geo["tangent_lon"]
+SZA_DEG     = _geo["sza_deg"]
+SAA_DEG     = _geo["saa_deg"]
 
-# Altitude grid [m]
-ALT_GRID_M = np.arange(0.0, 65001.0, 1000.0)
+ALI_WAVELENGTHS = np.array(_ins["wavelengths_nm"])
+ALT_GRID_M = np.arange(
+    _ins["alt_grid_start_m"],
+    _ins["alt_grid_stop_m"] + _ins["alt_grid_step_m"],
+    _ins["alt_grid_step_m"],
+)
 
-# Output directory
-OUT_DIR = os.path.expanduser("~/results/hawc_ali/")
+OUT_DIR = os.path.expanduser(_s["out_dir"])
 
 # ── END CONFIGURATION ──────────────────────────────────────────────────────
 
@@ -65,22 +80,17 @@ OUT_DIR = os.path.expanduser("~/results/hawc_ali/")
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    if SIMULATOR == "full":
-        from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
-        sim_obj = ALIPhase0Simulator()
-    else:
-        sim_obj = IdealALISimulator()
+    simulator = IdealALISimulator()
     sim_input = {
-        "tangent_latitude":            TANGENT_LAT,
-        "tangent_longitude":           TANGENT_LON,
+        "tangent_latitude":           TANGENT_LAT,
+        "tangent_longitude":          TANGENT_LON,
         "tangent_solar_zenith_angle":  SZA_DEG,
         "tangent_solar_azimuth_angle": SAA_DEG,
         "altitude_grid":               ALT_GRID_M,
+        "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          ALI_WAVELENGTHS,
         "time":                        pd.Timestamp(OBS_TIME),
     }
-    if SIMULATOR == "ideal":
-        sim_input["polarization_states"] = ["I", "dolp"]
 
     # ── Background ──────────────────────────────────────────────────────
     print("Loading background WACCM file...")
@@ -88,8 +98,8 @@ def main():
     profiles_bg = waccm_bg.get_column_profiles(TANGENT_LAT, TANGENT_LON, TIME_IDX)
 
     print("Running background simulation...")
-    data_bg = sim_obj.run(
-        ["l2", "sk2_atmosphere"],
+    data_bg = simulator.run(
+        ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
         {**sim_input,
          "constituents": build_waccm_constituents(profiles_bg, ALT_GRID_M)},
     )
@@ -108,8 +118,8 @@ def main():
         profiles_inj = waccm_inj.get_column_profiles(TANGENT_LAT, TANGENT_LON, TIME_IDX)
 
         print("Running injection simulation...")
-        data_inj = sim_obj.run(
-            ["l2", "sk2_atmosphere"],
+        data_inj = simulator.run(
+            ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
             {**sim_input,
              "constituents": build_waccm_constituents(profiles_inj, ALT_GRID_M)},
         )

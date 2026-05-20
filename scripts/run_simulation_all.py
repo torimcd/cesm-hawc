@@ -45,10 +45,19 @@ import glob
 import logging
 import os
 import re
+import sys
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
+
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        sys.exit("Python < 3.11 requires tomli: pip install tomli")
 
 import numpy as np
 import pandas as pd
@@ -58,45 +67,41 @@ from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
+# Edit config.toml at the project root (gitignored).
+# Copy config.example.toml → config.toml to get started.
 
-# Directories containing *.cam.h0.YYYY-MM.nc files.
-# The script globs for all h0 files it finds here.
-WACCM_BACKGROUND_DIR = "/path/to/background/atm/hist/"
-WACCM_INJECTION_DIR  = "/path/to/injection/atm/hist/"   # set None to skip
+_CONFIG = Path(__file__).parent.parent / "config.toml"
+if not _CONFIG.exists():
+    sys.exit(
+        f"config.toml not found at {_CONFIG}\n"
+        "Copy config.example.toml → config.toml and fill in your paths."
+    )
+with open(_CONFIG, "rb") as _f:
+    _cfg = tomllib.load(_f)
 
-# File glob pattern within each directory
-H0_PATTERN = "*.cam.h0.*.nc"
+_b   = _cfg["batch"]
+_geo = _cfg["geometry"]
+_ins = _cfg["instrument"]
 
-# If set, only process months whose YYYY-MM string matches this list.
-# Leave empty ([]) to process all available months.
-MONTH_FILTER: list[str] = []   # e.g. ["2034-01", "2034-02"]
+WACCM_BACKGROUND_DIR = _b["waccm_background_dir"]
+WACCM_INJECTION_DIR  = _b["waccm_injection_dir"] or None
+H0_PATTERN           = _b["h0_pattern"]
+MONTH_FILTER: list[str] = _b["month_filter"]
 
-# Observation geometry — match your SO₂ injection latitude
-TANGENT_LAT = 30.6    # degrees
-TANGENT_LON = 180.0   # degrees
-SZA_DEG     = 60.0
-SAA_DEG     = 0.0
+TANGENT_LAT = _geo["tangent_lat"]
+TANGENT_LON = _geo["tangent_lon"]
+SZA_DEG     = _geo["sza_deg"]
+SAA_DEG     = _geo["saa_deg"]
 
-# Which ALI simulator to use: "ideal" or "full"
-# "full" requires: pip install ali_l1 -f https://arg.usask.ca/wheels/
-SIMULATOR = "ideal"
+ALI_WAVELENGTHS = np.array(_ins["wavelengths_nm"])
+ALT_GRID_M = np.arange(
+    _ins["alt_grid_start_m"],
+    _ins["alt_grid_stop_m"] + _ins["alt_grid_step_m"],
+    _ins["alt_grid_step_m"],
+)
 
-# ALI sample wavelengths [nm]
-# For "ideal": [470, 745, 1020] for dev; [470,525,745,1020,1230,1450,1500] for production.
-# For "full":  fixed 11 instrument bands (610–1560 nm), set by detector design.
-ALI_WAVELENGTHS = {
-    "ideal": np.array([470.0, 745.0, 1020.0]),
-    "full":  np.array([610., 676., 755., 869., 950., 1022., 1080., 1225., 1360., 1450., 1560.]),
-}[SIMULATOR]
-
-# Altitude grid [m]
-ALT_GRID_M = np.arange(0.0, 65001.0, 1000.0)
-
-# Output root directory
-OUT_DIR = os.path.expanduser("~/results/hawc_ali/")
-
-# Parallelism: number of worker processes (0 or 1 = serial)
-N_WORKERS = 4
+OUT_DIR   = os.path.expanduser(_b["out_dir"])
+N_WORKERS = _b["n_workers"]
 
 # ── END CONFIGURATION ──────────────────────────────────────────────────────────
 
@@ -146,18 +151,16 @@ def _collect_files(directory: str, pattern: str,
 
 def _build_sim_input(obs_time_str: str) -> dict:
     """Return the geometry/instrument dict shared by all simulations."""
-    sim_input = {
+    return {
         "tangent_latitude":            TANGENT_LAT,
         "tangent_longitude":           TANGENT_LON,
         "tangent_solar_zenith_angle":  SZA_DEG,
         "tangent_solar_azimuth_angle": SAA_DEG,
         "altitude_grid":               ALT_GRID_M,
+        "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          ALI_WAVELENGTHS,
         "time":                        pd.Timestamp(obs_time_str),
     }
-    if SIMULATOR == "ideal":
-        sim_input["polarization_states"] = ["I", "dolp"]
-    return sim_input
 
 
 def _save_cesm_extinction(profiles: dict, alt_m: np.ndarray,
@@ -220,11 +223,7 @@ def process_month(
         # mid-month time for the geometry calculation
         obs_time = f"{date}-15T12:00:00Z"
         sim_input = _build_sim_input(obs_time)
-        if SIMULATOR == "full":
-            from hawcsimulator.ali.configurations.full_inst import ALIPhase0Simulator
-            sim_obj = ALIPhase0Simulator()
-        else:
-            sim_obj = IdealALISimulator()
+        simulator = IdealALISimulator()
 
         # ── background ──────────────────────────────────────────────────────
         bg_out = os.path.join(out_root, "background", date)
@@ -236,8 +235,8 @@ def process_month(
                                                     TIME_IDX)
 
         log.info("[%s] Running background simulation...", date)
-        data_bg = sim_obj.run(
-            ["l2", "sk2_atmosphere"],
+        data_bg = simulator.run(
+            ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
             {**sim_input,
              "constituents": build_waccm_constituents(profiles_bg, ALT_GRID_M)},
         )
@@ -267,8 +266,8 @@ def process_month(
                                                           TIME_IDX)
 
             log.info("[%s] Running injection simulation...", date)
-            data_inj = sim_obj.run(
-                ["l2", "sk2_atmosphere"],
+            data_inj = simulator.run(
+                ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"],
                 {**sim_input,
                  "constituents": build_waccm_constituents(profiles_inj,
                                                           ALT_GRID_M)},

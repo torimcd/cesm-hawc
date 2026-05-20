@@ -211,3 +211,6 @@ marimo/_lsp/
 __marimo__/
 .DS_Store
 .gitignore
+
+# Machine-specific config (paths, HPC settings) — copy config.example.toml → config.toml
+config.toml

@@ -28,6 +28,19 @@ tangent_lon = 180.0   # degrees
 sza_deg     = 60.0
 saa_deg     = 0.0
 
+# ── CESM archive (for Figures A–C in plot_results_all.py) ────────────────
+[cesm]
+archive_dir  = "~/scratch/cesm/output/archive/"   # root containing <casename>/atm/hist/
+bg_casename  = "sai_background_2035_001"
+inj_casename = "sai_1.0Tg_2035_001"
+
+# ── Plot display settings (shared by plot_results.py and plot_results_all.py) ─
+[plots]
+alt_min_km   = 5.0
+alt_max_km   = 40.0
+ref_alt_km   = 20.0    # reference line drawn on each panel (injection altitude)
+strat_min_km = 15.0    # lower bound for stratospheric column integrals
+
 # ── ALI instrument configuration (shared by both scripts) ─────────────────
 [instrument]
 # Wavelengths for the ideal spectrograph simulator [nm].

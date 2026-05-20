@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        sys.exit("Python < 3.11 requires tomli: pip install tomli")
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,15 +39,22 @@ plt.rcParams.update({
 })
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────
+# Edit config.toml at the project root (gitignored).
+# Copy config.example.toml → config.toml to get started.
 
-OUT_DIR = os.path.expanduser("~/results/hawc_ali/")
+_CONFIG = Path(__file__).parent.parent / "config.toml"
+if not _CONFIG.exists():
+    sys.exit(
+        f"config.toml not found at {_CONFIG}\n"
+        "Copy config.example.toml → config.toml and fill in your paths."
+    )
+with open(_CONFIG, "rb") as _f:
+    _cfg = tomllib.load(_f)
 
-# Altitude range for plots [km]
-ALT_MIN_KM = 5.0
-ALT_MAX_KM = 40.0
-
-# Reference altitude line [km] (e.g. peak injection altitude)
-REF_ALT_KM = 20.0
+OUT_DIR    = os.path.expanduser(_cfg["single"]["out_dir"])
+ALT_MIN_KM = _cfg["plots"]["alt_min_km"]
+ALT_MAX_KM = _cfg["plots"]["alt_max_km"]
+REF_ALT_KM = _cfg["plots"]["ref_alt_km"]
 
 # ── END CONFIGURATION ──────────────────────────────────────────────────────
 

@@ -42,6 +42,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        sys.exit("Python < 3.11 requires tomli: pip install tomli")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -58,24 +66,35 @@ plt.rcParams.update({
 })
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
+# Edit config.toml at the project root (gitignored).
+# Copy config.example.toml → config.toml to get started.
 
-OUT_DIR = os.path.expanduser("~/projects/rrg-czg/vmcd/hawc/results/")
+_CONFIG = Path(__file__).parent.parent / "config.toml"
+if not _CONFIG.exists():
+    sys.exit(
+        f"config.toml not found at {_CONFIG}\n"
+        "Copy config.example.toml → config.toml and fill in your paths."
+    )
+with open(_CONFIG, "rb") as _f:
+    _cfg = tomllib.load(_f)
 
-# Root archive directory containing <casename>/atm/hist/*.cam.h0.*.nc
-# Used only for Figures A–C (Sellitto analogs).
-CESM_ARCHIVE_DIR = os.path.expanduser("~/scratch/cesm/output/archive/")
-BG_CASENAME      = "sai_background_2035_001"
-INJ_CASENAME     = "sai_1.0Tg_2035_001"
+_b    = _cfg["batch"]
+_geo  = _cfg["geometry"]
+_pl   = _cfg["plots"]
+_cesm = _cfg["cesm"]
 
-# Observation column
-TANGENT_LAT = 30.6
-TANGENT_LON = 180.0
+OUT_DIR          = os.path.expanduser(_b["out_dir"])
+CESM_ARCHIVE_DIR = os.path.expanduser(_cesm["archive_dir"])
+BG_CASENAME      = _cesm["bg_casename"]
+INJ_CASENAME     = _cesm["inj_casename"]
 
-# Altitude range for all plots [km]
-ALT_MIN_KM   = 5.0
-ALT_MAX_KM   = 40.0
-REF_ALT_KM   = 20.0    # reference line (injection altitude)
-STRAT_MIN_KM = 15.0    # lower bound for stratospheric integrals
+TANGENT_LAT = _geo["tangent_lat"]
+TANGENT_LON = _geo["tangent_lon"]
+
+ALT_MIN_KM   = _pl["alt_min_km"]
+ALT_MAX_KM   = _pl["alt_max_km"]
+REF_ALT_KM   = _pl["ref_alt_km"]
+STRAT_MIN_KM = _pl["strat_min_km"]
 
 # ── END CONFIGURATION ──────────────────────────────────────────────────────────
 
@@ -731,7 +750,7 @@ def main() -> None:
 
         except FileNotFoundError as e:
             print(f"  Skipping Figures A–C: {e}")
-            print("  Check CESM_ARCHIVE_DIR, BG_CASENAME, INJ_CASENAME in config.")
+            print("  Check cesm.archive_dir, cesm.bg_casename, cesm.inj_casename in config.toml.")
         except Exception as e:
             print(f"  Figures A–C failed: {e}")
             import traceback; traceback.print_exc()

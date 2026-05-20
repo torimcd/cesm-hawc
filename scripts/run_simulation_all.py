@@ -387,6 +387,20 @@ def main() -> None:
         for date in all_dates
     ]
 
+    # ── pre-warm calibration database ────────────────────────────────────────
+    # The simulator writes a calibration NetCDF to ~/.local/share/hawc-simulator/
+    # the first time it runs.  If N_WORKERS > 1 all workers start simultaneously
+    # and race to create the file, causing PermissionError on HPC filesystems for
+    # all but the first.  Creating it here in the main process guarantees the file
+    # exists before any worker calls simulator.run().
+    log.info("Pre-warming calibration database...")
+    try:
+        from hawcsimulator.ali.calibration import calibration_database
+        calibration_database("ideal_spectrograph", "v1")
+        log.info("Calibration database ready.")
+    except Exception as e:
+        log.warning("Could not pre-warm calibration database: %s", e)
+
     # ── dispatch ──────────────────────────────────────────────────────────────
     results = []
     if N_WORKERS <= 1:

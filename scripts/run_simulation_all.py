@@ -61,8 +61,11 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
+import xarray as xr
+from scipy.interpolate import interp1d
 
-from cesm_hawc.waccm import WACCMAtmosphere
+from cesm_hawc.waccm import (WACCMAtmosphere, R_DRY, R_H2O,
+                              hybrid_to_pressure, pressure_to_altitude)
 from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
 
@@ -163,29 +166,55 @@ def _build_sim_input(obs_time_str: str) -> dict:
     }
 
 
-def _save_cesm_extinction(profiles: dict, alt_m: np.ndarray,
-                          out_dir: str, tag: str) -> None:
-    """Save CESM MAM4 extinction profiles directly (no simulator needed)."""
-    from cesm_hawc.constituents import _extinction_from_number_density
-    from aliprocessing.l2.optical import aerosol_median_radius_db
-    import xarray as xr
+def _save_cesm_extinction(waccm_obj: WACCMAtmosphere, time_index: int,
+                          alt_m: np.ndarray, out_dir: str, tag: str) -> None:
+    """
+    Extract CESM extinction profiles directly from the h0 file and save to
+    NetCDF.  Uses EXTINCTdn (550 nm), EXTINCTUVdn (350 nm), and EXTINCTNIRdn
+    (1020 nm) — CESM's own internally-computed aerosol extinction on model
+    levels.  EXTINCTNIRdn at 1020 nm is a direct ALI wavelength match.
+    """
+    col = waccm_obj.ds.isel(time=time_index).sel(
+        lat=TANGENT_LAT, lon=TANGENT_LON, method="nearest"
+    )
 
-    mie_db     = aerosol_median_radius_db()
-    ext_accum  = _extinction_from_number_density(
-        profiles["sulfate_a1_N_cm3"], profiles["sulfate_a1_r_um"], mie_db
-    )
-    ext_coarse = _extinction_from_number_density(
-        profiles["sulfate_a3_N_cm3"], profiles["sulfate_a3_r_um"], mie_db
-    )
+    p0       = float(waccm_obj.ds["P0"].values) if "P0" in waccm_obj.ds else 100_000.0
+    ps       = float(col["PS"].values)
+    pressure = hybrid_to_pressure(col["hyam"].values, col["hybm"].values, p0, ps)
+    T_v      = col["T"].values * (1.0 + (R_H2O / R_DRY - 1.0) * col["Q"].values)
+    altitude = pressure_to_altitude(pressure, T_v, ps, waccm_obj.z_surface)
+
+    def interp_ext(varname):
+        if varname not in col:
+            return None
+        vals = np.maximum(col[varname].values, 0.0)
+        idx  = np.argsort(altitude)
+        f    = interp1d(altitude[idx], vals[idx], kind="linear",
+                        bounds_error=False, fill_value=0.0)
+        return f(alt_m)
+
+    data_vars = {}
+    for varname, label in [
+        ("EXTINCTdn",    "ext_550nm"),
+        ("EXTINCTUVdn",  "ext_350nm"),
+        ("EXTINCTNIRdn", "ext_1020nm"),
+    ]:
+        interped = interp_ext(varname)
+        if interped is not None:
+            data_vars[label] = ("altitude_m", interped)
+
+    if not data_vars:
+        log.warning("[%s] No EXTINCT* variables found in file — skipping cesm_extinction_%s.nc",
+                    tag, tag)
+        return
+
     ds = xr.Dataset(
-        {
-            "extinction_total":  ("altitude_m", ext_accum + ext_coarse),
-            "extinction_accum":  ("altitude_m", ext_accum),
-            "extinction_coarse": ("altitude_m", ext_coarse),
-        },
+        data_vars,
         coords={"altitude_m": alt_m},
-        attrs={"description": "CESM MAM4 extinction at 745 nm",
-               "wavelength_nm": 745.0},
+        attrs={
+            "description": "CESM aerosol extinction from EXTINCTdn, EXTINCTUVdn, EXTINCTNIRdn",
+            "wavelengths_nm": "350, 550, 1020",
+        },
     )
     path = os.path.join(out_dir, f"cesm_extinction_{tag}.nc")
     ds.to_netcdf(path)
@@ -246,7 +275,7 @@ def process_month(
                  data_bg["l2"]["cost"].values)
 
         data_bg["l2"].to_netcdf(os.path.join(bg_out, "l2_background.nc"))
-        _save_cesm_extinction(profiles_bg, ALT_GRID_M, bg_out, "background")
+        _save_cesm_extinction(waccm_bg, TIME_IDX, ALT_GRID_M, bg_out, "background")
 
         burden_bg = waccm_bg.sulfate_column_burden(TANGENT_LAT, TANGENT_LON,
                                                     TIME_IDX)
@@ -278,7 +307,7 @@ def process_month(
                      data_inj["l2"]["cost"].values)
 
             data_inj["l2"].to_netcdf(os.path.join(inj_out, "l2_injection.nc"))
-            _save_cesm_extinction(profiles_inj, ALT_GRID_M, inj_out, "injection")
+            _save_cesm_extinction(waccm_inj, TIME_IDX, ALT_GRID_M, inj_out, "injection")
             burden_inj = waccm_inj.sulfate_column_burden(TANGENT_LAT, TANGENT_LON,
                                                           TIME_IDX)
 

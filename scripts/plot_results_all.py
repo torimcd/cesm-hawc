@@ -215,10 +215,10 @@ def fig1_extinction_profiles(months: list[str], out_dir: str) -> None:
         ax_r.plot(r_bg.values, alts_km, lw=1.5, color="steelblue",
                   label="Retrieved (bg)")
 
-        if cesm_bg is not None and "extinction_total" in cesm_bg:
+        if cesm_bg is not None and "ext_550nm" in cesm_bg:
             cesm_alt = cesm_bg["altitude_m"].values / 1e3
-            ax_ext.plot(cesm_bg["extinction_total"].values, cesm_alt,
-                        lw=1, ls=":", color="steelblue", label="CESM (bg)")
+            ax_ext.plot(cesm_bg["ext_550nm"].values, cesm_alt,
+                        lw=1, ls=":", color="steelblue", label="CESM 550 nm (bg)")
 
         if l2_inj is not None:
             ext_inj = l2_inj["stratospheric_aerosol_extinction_per_m"]
@@ -227,10 +227,10 @@ def fig1_extinction_profiles(months: list[str], out_dir: str) -> None:
                         color="firebrick", label="ALI retrieved (inj)")
             ax_r.plot(r_inj.values, alts_km, lw=1.5, ls="--",
                       color="firebrick", label="Retrieved (inj)")
-            if cesm_inj is not None and "extinction_total" in cesm_inj:
+            if cesm_inj is not None and "ext_550nm" in cesm_inj:
                 cesm_alt = cesm_inj["altitude_m"].values / 1e3
-                ax_ext.plot(cesm_inj["extinction_total"].values, cesm_alt,
-                            lw=1, ls=":", color="firebrick", label="CESM (inj)")
+                ax_ext.plot(cesm_inj["ext_550nm"].values, cesm_alt,
+                            lw=1, ls=":", color="firebrick", label="CESM 550 nm (inj)")
 
         ax_ext.set_xscale("log")
         ax_ext.set_xlabel("Extinction [m⁻¹]", fontsize=8)
@@ -419,30 +419,49 @@ def figA_profile_timeseries(ds_bg: xr.Dataset, ds_inj: xr.Dataset,
                     color="firebrick", lw=1.5, ls="--", label="ALI PO")
 
         # Anomaly panel
+        #ext_bg_i  = np.interp(alts_grid, z_bg[m_bg],   ext_bg_c[m_bg],   left=0, right=0)
+        #ext_inj_i = np.interp(alts_grid, z_inj[m_inj], ext_inj_c[m_inj], left=0, right=0)
+        #diff = (ext_inj_i - ext_bg_i) * 1e5
+        #ax_diff.fill_betweenx(alts_grid, 0, diff, where=diff >= 0,
+        #                       color="firebrick", alpha=0.6)
+        #ax_diff.fill_betweenx(alts_grid, 0, diff, where=diff <  0,
+        #                       color="steelblue", alpha=0.6)
+        #ax_diff.axvline(0, color="k", lw=0.8)
+        #
+        #for ax in (ax_bg, ax_inj):
+        #    ax.set_xscale("log")
+        #    ax.set_xlabel("Extinction [m⁻¹]", fontsize=8)
+        #ax_diff.set_xlabel("Δ ext\n[×10⁻⁵ m⁻¹]", fontsize=8)
+
+        #for ax in (ax_bg, ax_inj, ax_diff):
+        #    ax.set_ylim(ALT_MIN_KM, ALT_MAX_KM)
+        #    _ref_hline(ax, label=False)
+        #    if ci == 0:
+        #        ax.set_ylabel("Altitude [km]")
+
+        #axes[0, ci].set_title(date, fontsize=9)
+        #if ci == 0:
+        #    ax_bg.legend(fontsize=7)
+        #    ax_inj.legend(fontsize=7)
+
+        # Anomaly panel
         ext_bg_i  = np.interp(alts_grid, z_bg[m_bg],   ext_bg_c[m_bg],   left=0, right=0)
         ext_inj_i = np.interp(alts_grid, z_inj[m_inj], ext_inj_c[m_inj], left=0, right=0)
-        diff = (ext_inj_i - ext_bg_i) * 1e5
-        ax_diff.fill_betweenx(alts_grid, 0, diff, where=diff >= 0,
-                               color="firebrick", alpha=0.6)
-        ax_diff.fill_betweenx(alts_grid, 0, diff, where=diff <  0,
-                               color="steelblue", alpha=0.6)
+        diff_cesm = (ext_inj_i - ext_bg_i) * 1e5
+        ax_diff.plot(diff_cesm, alts_grid, color="firebrick", lw=2, label="CESM PR")
         ax_diff.axvline(0, color="k", lw=0.8)
 
-        for ax in (ax_bg, ax_inj):
-            ax.set_xscale("log")
-            ax.set_xlabel("Extinction [m⁻¹]", fontsize=8)
-        ax_diff.set_xlabel("Δ ext\n[×10⁻⁵ m⁻¹]", fontsize=8)
+        if date in l2_data:
+            l2_bg_ds, l2_inj_ds = l2_data[date]
+            if l2_inj_ds is not None:
+                alt_l2     = l2_bg_ds["stratospheric_aerosol_extinction_per_m"].altitude.values / 1e3
+                ext_l2_bg  = l2_bg_ds["stratospheric_aerosol_extinction_per_m"].values
+                ext_l2_inj = l2_inj_ds["stratospheric_aerosol_extinction_per_m"].values
+                diff_l2    = (ext_l2_inj - ext_l2_bg) * 1e5
+                ax_diff.plot(diff_l2, alt_l2, color="gray", lw=1.5, ls="--", label="ALI PO")
 
-        for ax in (ax_bg, ax_inj, ax_diff):
-            ax.set_ylim(ALT_MIN_KM, ALT_MAX_KM)
-            _ref_hline(ax, label=False)
-            if ci == 0:
-                ax.set_ylabel("Altitude [km]")
-
-        axes[0, ci].set_title(date, fontsize=9)
         if ci == 0:
-            ax_bg.legend(fontsize=7)
-            ax_inj.legend(fontsize=7)
+            ax_diff.legend(fontsize=7)
 
     for ax, row_label in zip(axes[:, 0],
                               ["Background", "Injection", "Anomaly (inj−bg)"]):

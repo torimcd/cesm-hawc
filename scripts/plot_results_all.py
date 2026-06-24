@@ -230,7 +230,7 @@ def fig1_extinction_profiles(months: list[str], out_dir: str) -> None:
         alts_km = ext_bg.altitude.values / 1e3
 
         ax_ext.plot(ext_bg.values, alts_km, lw=1.5, color="steelblue",
-                    label="ALI retrieved (bg)")
+                    label="ALI retrieved 745 nm (bg)")
         ax_r.plot(r_bg.values, alts_km, lw=1.5, color="steelblue",
                   label="Retrieved (bg)")
 
@@ -243,7 +243,7 @@ def fig1_extinction_profiles(months: list[str], out_dir: str) -> None:
             ext_inj = l2_inj["stratospheric_aerosol_extinction_per_m"]
             r_inj   = l2_inj["stratospheric_aerosol_median_radius"]
             ax_ext.plot(ext_inj.values, alts_km, lw=1.5, ls="--",
-                        color="firebrick", label="ALI retrieved (inj)")
+                        color="firebrick", label="ALI retrieved 745 nm (inj)")
             ax_r.plot(r_inj.values, alts_km, lw=1.5, ls="--",
                       color="firebrick", label="Retrieved (inj)")
             if cesm_inj is not None and "ext_550nm" in cesm_inj:

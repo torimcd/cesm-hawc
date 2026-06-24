@@ -15,6 +15,7 @@ from cesm_hawc.constituents import build_waccm_constituents
 
 try:
     from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+    from hawcsimulator.noise import ALINoiseModel
 except ImportError as e:
     raise ImportError("hawcsimulator must be installed: pip install hawcsimulator") from e
 
@@ -30,6 +31,7 @@ def run_ali_simulation(
     obs_time: str | pd.Timestamp = "2035-01-01T12:00:00Z",
     wavelengths_nm: np.ndarray | None = None,
     alt_grid_m: np.ndarray | None = None,
+    noise_model: ALINoiseModel | None = None,
 ) -> dict:
     """
     Run the HAWC IdealALISimulator on a WACCM background and optional
@@ -94,6 +96,8 @@ def run_ali_simulation(
         "sample_wavelengths":          wavelengths_nm,
         "time":                        obs_time,
     }
+    if noise_model is not None:
+        sim_input["l1b_cfg"] = {"noise_model": noise_model}
 
     # ── Background ────────────────────────────────────────────────────────
     waccm_bg   = WACCMAtmosphere(background_file, alt_grid_km=alt_grid_m / 1e3)

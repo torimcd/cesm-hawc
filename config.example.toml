@@ -67,6 +67,28 @@ max_gap_s = 1800.0    # 30 min
 out_dir   = "~/results/hawc_ali_orbit/"
 n_workers = 4          # parallel worker processes (by day); 1 = serial
 
+# ── Real orbit file run (scripts/run_orbit_real.py) ──────────────────────
+[orbit_real]
+# Directory containing HAWC orbit NetCDF files (one file per orbit pass)
+orbit_dir     = "/path/to/orbit/files/"
+orbit_pattern = "orbit_*.nc"
+
+# Daily WACCM h2 files — one file per calendar day
+waccm_background_dir = "/path/to/background/atm/hist/"
+waccm_injection_dir  = ""              # leave empty ("") to skip injection run
+h2_pattern           = "*.cam.h2.*.nc"
+
+out_dir   = "~/results/hawc_ali_orbit_real/"
+n_workers = 4                          # parallel worker processes (by orbit file); 1 = serial
+
+# Which across-track pixel indices to simulate.
+# [] = all 512 pixels (slow); [256] = center pixel only (fast smoke test).
+across_indices = [256]
+
+# Process every Nth time step along the orbit. 1 = every second (~4218/orbit).
+# Use 10 or 60 to subsample for faster runs.
+time_stride = 1
+
 # ── ALI instrument configuration (shared by both scripts) ─────────────────
 [instrument]
 # Wavelengths for the ideal spectrograph simulator [nm].

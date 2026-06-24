@@ -68,6 +68,7 @@ from cesm_hawc.waccm import (WACCMAtmosphere, R_DRY, R_H2O,
                               hybrid_to_pressure, pressure_to_altitude)
 from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+from hawcsimulator.noise import ALINoiseModel
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
 # Edit config.toml at the project root (gitignored).
@@ -105,6 +106,8 @@ ALT_GRID_M = np.arange(
 
 OUT_DIR   = os.path.expanduser(_b["out_dir"])
 N_WORKERS = _b["n_workers"]
+
+NOISE_MODEL = ALINoiseModel(straylight_fraction=0.0)
 
 # ── END CONFIGURATION ──────────────────────────────────────────────────────────
 
@@ -163,6 +166,7 @@ def _build_sim_input(obs_time_str: str) -> dict:
         "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          ALI_WAVELENGTHS,
         "time":                        pd.Timestamp(obs_time_str),
+        "l1b_cfg":                     {"noise_model": NOISE_MODEL},
     }
 
 

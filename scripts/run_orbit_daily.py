@@ -340,6 +340,8 @@ def process_day(
 
         # results[label] = list of l1b datasets
         results: dict[str, list[xr.Dataset]] = {label: [] for label in h2_files}
+        successful_obs: list[dict] = []  # obs that passed the daytime/SZA check
+        n_skipped_night = 0
 
         for obs in observations:
             t   = obs["time"]
@@ -362,20 +364,49 @@ def process_day(
             if NOISE_MODEL is not None:
                 sim_input["l1b_cfg"] = {"noise_model": NOISE_MODEL}
 
+            # SZA depends only on time + geometry, not on which case/h2 file
+            # is used, so if one case is night-side, all cases are — check
+            # once per observation and skip the whole point if so, rather
+            # than letting it crash the whole day.
+            obs_l1b: dict[str, xr.Dataset] = {}
+            skip_obs = False
             for label, h2_path in h2_files.items():
                 waccm  = get_waccm(h2_path)
                 profiles = waccm.get_column_profiles(lat, lon, time_index=0)
-                data = simulator.run(
-                    ["front_end_radiance", "l1b"],   # forward only — no l2
-                    {**sim_input,
-                     "constituents": build_waccm_constituents(profiles, ALT_GRID_M)},
-                )
-                results[label].append(data["l1b"])
+                try:
+                    data = simulator.run(
+                        ["front_end_radiance", "l1b"],   # forward only — no l2
+                        {**sim_input,
+                         "constituents": build_waccm_constituents(profiles, ALT_GRID_M)},
+                    )
+                except ValueError as e:
+                    if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
+                        # night-side tangent point — physically unobservable,
+                        # not an error condition. Skip this observation.
+                        skip_obs = True
+                        break
+                    raise
+                obs_l1b[label] = data["l1b"]
 
-        # save curtain per case
-        lats  = [o["lat"]  for o in observations]
-        lons  = [o["lon"]  for o in observations]
-        times = [o["time"] for o in observations]
+            if skip_obs:
+                n_skipped_night += 1
+                continue
+
+            for label, l1b in obs_l1b.items():
+                results[label].append(l1b)
+            successful_obs.append(obs)
+
+        if n_skipped_night:
+            log.info(
+                "[%s] skipped %d/%d observations (night-side, SZA too large)",
+                sim_date_str, n_skipped_night, len(observations),
+            )
+
+        # save curtain per case — coordinates must come from successful_obs
+        # only, so they stay aligned with the along_track dim of the data
+        lats  = [o["lat"]  for o in successful_obs]
+        lons  = [o["lon"]  for o in successful_obs]
+        times = [o["time"] for o in successful_obs]
 
         for label, l1b_list in results.items():
             if not l1b_list:
@@ -391,9 +422,9 @@ def process_day(
             )
             curtain.to_netcdf(os.path.join(case_out, "curtain.nc"))
 
-        # save orbit track csv (same for all cases)
+        # save orbit track csv (same for all cases) — daytime obs only
         track_df = pd.DataFrame({
-            "time": [o["time"].isoformat() for o in observations],
+            "time": [o["time"].isoformat() for o in successful_obs],
             "lat":  lats,
             "lon":  lons,
         })
@@ -402,8 +433,9 @@ def process_day(
         os.makedirs(bg_out, exist_ok=True)
         track_df.to_csv(os.path.join(bg_out, "orbit_track.csv"), index=False)
 
-        log.info("[%s] %d obs, %d cases", sim_date_str, len(observations), len(h2_files))
-        return f"OK   {sim_date_str}  ({len(observations)} obs)"
+        log.info("[%s] %d/%d obs (daytime), %d cases",
+                  sim_date_str, len(successful_obs), len(observations), len(h2_files))
+        return f"OK   {sim_date_str}  ({len(successful_obs)}/{len(observations)} obs)"
 
     except Exception:
         tb = traceback.format_exc()

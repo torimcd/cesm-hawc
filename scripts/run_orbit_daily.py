@@ -132,6 +132,41 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Calibration database guard
+# ---------------------------------------------------------------------------
+# hawcsimulator's calibration_database() unconditionally rewrites its cached
+# .nc file (clobber=True) every time it's called, including internally
+# whenever an IdealALISimulator is constructed. Under many workers/days
+# hitting the same NFS-mounted cache file concurrently, this produces
+# PermissionError / KeyError races (multiple processes racing to open the
+# same file for writing).
+#
+# We patch it here so it's idempotent: if the cache file already exists on
+# disk, skip the rewrite and trust it. This is safe because the cache
+# content only depends on the (name, version) pair, which is fixed per run.
+
+from hawcsimulator.ali import calibration as _cal_mod
+
+_orig_calibration_database = _cal_mod.calibration_database
+
+
+def _cache_file_path(name: str, version: str) -> str:
+    # Matches the path seen in tracebacks:
+    # ~/.local/share/hawc-simulator/ali/calibration/{name}_{version}.nc
+    cache_dir = os.path.expanduser("~/.local/share/hawc-simulator/ali/calibration")
+    return os.path.join(cache_dir, f"{name}_{version}.nc")
+
+
+def _safe_calibration_database(name: str, version: str):
+    cache_file = _cache_file_path(name, version)
+    if os.path.exists(cache_file):
+        return
+    _orig_calibration_database(name, version)
+
+
+_cal_mod.calibration_database = _safe_calibration_database
+
+# ---------------------------------------------------------------------------
 # Orbit file utilities
 # ---------------------------------------------------------------------------
 
@@ -247,6 +282,26 @@ def build_h2_index(case: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Per-worker simulator (one instance reused across all days a worker handles)
+# ---------------------------------------------------------------------------
+
+_SIMULATOR: Optional[IdealALISimulator] = None
+
+
+def _get_simulator() -> IdealALISimulator:
+    """
+    Lazily construct IdealALISimulator once per worker process and reuse it
+    across all process_day() calls dispatched to that worker. Avoids
+    redundant calibration-database access (and construction overhead) on
+    every single day.
+    """
+    global _SIMULATOR
+    if _SIMULATOR is None:
+        _SIMULATOR = IdealALISimulator()
+    return _SIMULATOR
+
+
+# ---------------------------------------------------------------------------
 # Per-day simulation
 # ---------------------------------------------------------------------------
 
@@ -265,7 +320,7 @@ def process_day(
     Returns short status string.
     """
     try:
-        simulator = IdealALISimulator()
+        simulator = _get_simulator()
         waccm_cache: dict[str, WACCMAtmosphere] = {}
 
         def get_waccm(path: str) -> WACCMAtmosphere:
@@ -417,11 +472,11 @@ def main() -> None:
     log.info("Processing %d days with %d cases each",
              len(jobs), len(case_labels))
 
-    # pre-warm calibration database
+    # pre-warm calibration database (now idempotent — safe to call again
+    # even if a worker also triggers it via _get_simulator())
     log.info("Pre-warming calibration database...")
     try:
-        from hawcsimulator.ali.calibration import calibration_database
-        calibration_database("ideal_spectrograph", "v1")
+        _cal_mod.calibration_database("ideal_spectrograph", "v1")
         log.info("Calibration database ready.")
     except Exception as e:
         log.warning("Could not pre-warm calibration database: %s", e)

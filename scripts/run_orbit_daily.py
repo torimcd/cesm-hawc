@@ -230,6 +230,11 @@ def extract_observations(
         time_s = ds["time"].values  # int64 seconds since 2019-08-01
         lats   = ds["latitude"].values[:, 0, center_pixel]
         lons   = ds["longitude"].values[:, 0, center_pixel]
+        # satellite position (not the tangent point) — required by
+        # hawcsimulator's time-based solar geometry handler
+        obs_lats = ds["observer_latitude"].values
+        obs_lons = ds["observer_longitude"].values
+        obs_alts = ds["observer_altitude"].values
         ds.close()
 
         # convert orbit times to timestamps
@@ -251,6 +256,9 @@ def extract_observations(
                 "time": sim_time,
                 "lat":  float(lat),
                 "lon":  float(lon),
+                "observer_lat": float(obs_lats[i]),
+                "observer_lon": float(obs_lons[i]),
+                "observer_alt": float(obs_alts[i]),
             })
             prev_idx = i
 
@@ -341,11 +349,15 @@ def process_day(
             sim_input = {
                 "tangent_latitude":    float(lat),
                 "tangent_longitude":   float(lon),
+                "observer_latitude":   obs["observer_lat"],
+                "observer_longitude":  obs["observer_lon"],
+                "observer_altitude":   obs["observer_alt"],
                 "altitude_grid":       ALT_GRID_M,
                 "polarization_states": ["I", "dolp"],
                 "sample_wavelengths":  ALI_WAVELENGTHS,
                 "time":                t,
                 # SZA/SAA omitted -> computed automatically by astropy
+                # from time + observer position
             }
             if NOISE_MODEL is not None:
                 sim_input["l1b_cfg"] = {"noise_model": NOISE_MODEL}

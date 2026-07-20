@@ -64,6 +64,14 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+# Prevent astropy from downloading IERS Earth-orientation data on every run
+# (or every worker process). This data is used internally for precise solar
+# geometry, but SZA calculations don't need arcsecond-level Earth-orientation
+# precision, and compute nodes typically don't have internet access anyway.
+# Must be set before any code that triggers astropy's solar position calcs.
+from astropy.utils import iers
+iers.conf.auto_download = False
+
 from cesm_hawc.waccm import WACCMAtmosphere
 from cesm_hawc.constituents import build_waccm_constituents
 from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
@@ -290,6 +298,45 @@ def build_h2_index(case: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# L1bImage -> xr.Dataset conversion
+# ---------------------------------------------------------------------------
+# simulator.run(...)["l1b"] returns an aliprocessing.l1b.data.L1bImage, not a
+# plain xarray object. Its `.spectra` attribute is a dict keyed by
+# polarization state ("I", "dolp"), each value an L1bSpectra wrapping its own
+# xr.Dataset with dims (wavelength, los). "los" here is the line-of-sight /
+# altitude dimension and matches ALT_GRID_M; "I" and "dolp" share identical
+# geometry (tangent_altitude/lat/lon, time, solar_zenith_angle, etc.) so we
+# only need to pull that metadata from one of them.
+
+def _l1b_image_to_dataset(l1b) -> xr.Dataset:
+    """
+    Combine an L1bImage's 'I' and 'dolp' spectra into a single xr.Dataset
+    with dims (wavelength, altitude_m), suitable for xr.concat across
+    observations along a new "along_track" dimension.
+    """
+    I_ds    = l1b.spectra["I"].ds
+    dolp_ds = l1b.spectra["dolp"].ds
+
+    combined = xr.Dataset(
+        data_vars={
+            "radiance":       (("wavelength", "altitude_m"), I_ds["radiance"].values),
+            "radiance_noise": (("wavelength", "altitude_m"), I_ds["radiance_noise"].values),
+            "dolp":           (("wavelength", "altitude_m"), dolp_ds["radiance"].values),
+            "dolp_noise":     (("wavelength", "altitude_m"), dolp_ds["radiance_noise"].values),
+        },
+        coords={
+            "wavelength":          ALI_WAVELENGTHS,
+            "altitude_m":          I_ds["tangent_altitude"].values,
+            "tangent_latitude":    ("altitude_m", I_ds["tangent_latitude"].values),
+            "tangent_longitude":   ("altitude_m", I_ds["tangent_longitude"].values),
+            "solar_zenith_angle":  ("altitude_m", I_ds["solar_zenith_angle"].values),
+        },
+    )
+    combined.attrs["time"] = str(I_ds["time"].values)
+    return combined
+
+
+# ---------------------------------------------------------------------------
 # Per-worker simulator (one instance reused across all days a worker handles)
 # ---------------------------------------------------------------------------
 
@@ -386,7 +433,7 @@ def process_day(
                         skip_obs = True
                         break
                     raise
-                obs_l1b[label] = data["l1b"]
+                obs_l1b[label] = _l1b_image_to_dataset(data["l1b"])
 
             if skip_obs:
                 n_skipped_night += 1

@@ -43,6 +43,8 @@ OUT_DIR/
 from __future__ import annotations
 
 import glob
+import hashlib
+import json
 import logging
 import os
 import re
@@ -234,18 +236,71 @@ def orbit_file_start_time(path: str) -> pd.Timestamp:
     return t
 
 
+_ORBIT_CACHE_DIR = Path(__file__).parent.parent / ".cache"
+_ORBIT_CACHE_FILE = _ORBIT_CACHE_DIR / "orbit_day_index.json"
+
+
+def _orbit_files_fingerprint(orbit_files: list[str]) -> str:
+    """
+    Cheap fingerprint of the orbit file set (paths + mtimes + sizes) used to
+    detect when the cached day-index is stale and needs rebuilding. This is
+    fast (just filesystem stat calls) even though the actual index build is
+    slow (opens each file to read its start_time attribute).
+    """
+    parts = []
+    for f in orbit_files:
+        st = os.stat(f)
+        parts.append(f"{f}:{st.st_mtime_ns}:{st.st_size}")
+    fingerprint_str = "\n".join(parts)
+    return hashlib.sha256(fingerprint_str.encode()).hexdigest()
+
+
 def build_orbit_day_index(orbit_files: list[str]) -> dict[int, list[str]]:
     """
     Map orbit-calendar day-of-sequence (0-indexed from ORBIT_EPOCH) to
     list of orbit file paths covering that day.
 
+    Cached to disk: reading each orbit file's start_time attribute (1415
+    files) takes several minutes via xr.open_dataset, so the resulting
+    mapping is cached and only rebuilt if the orbit file set changes
+    (detected via a fingerprint of paths/mtimes/sizes, checked via cheap
+    os.stat calls rather than reopening every file).
+
     Returns dict: {orbit_day_index: [file, file, ...]}
     """
+    fingerprint = _orbit_files_fingerprint(orbit_files)
+
+    if _ORBIT_CACHE_FILE.exists():
+        try:
+            with open(_ORBIT_CACHE_FILE) as f:
+                cached = json.load(f)
+            if cached.get("fingerprint") == fingerprint:
+                day_index = {int(k): v for k, v in cached["day_index"].items()}
+                log.info("Using cached orbit day index (%d files, %d days)",
+                          len(orbit_files), len(day_index))
+                return day_index
+            else:
+                log.info("Orbit file set changed, rebuilding day index...")
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            log.warning("Orbit day index cache unreadable, rebuilding: %s", e)
+
+    log.info("Building orbit day index from %d files (reads start_time from "
+              "each file, this can take several minutes on first run)...",
+              len(orbit_files))
     day_index: dict[int, list[str]] = {}
     for f in orbit_files:
         t = orbit_file_start_time(f)
         day = (t.normalize() - ORBIT_EPOCH.normalize()).days
         day_index.setdefault(day, []).append(f)
+
+    try:
+        _ORBIT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_ORBIT_CACHE_FILE, "w") as f:
+            json.dump({"fingerprint": fingerprint, "day_index": day_index}, f)
+        log.info("Cached orbit day index to %s", _ORBIT_CACHE_FILE)
+    except OSError as e:
+        log.warning("Could not write orbit day index cache: %s", e)
+
     return day_index
 
 

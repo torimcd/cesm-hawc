@@ -211,7 +211,21 @@ def _safe_calibration_database(name: str, version: str):
     _orig_calibration_database(name, version)
 
 
+# Patch the module attribute (covers any code that does
+# hawcsimulator.ali.calibration.calibration_database(...) directly)...
 _cal_mod.calibration_database = _safe_calibration_database
+
+# ...but IdealALISimulator's _initialize_data() does NOT use that path. It
+# did `from hawcsimulator.ali.calibration import calibration_database` at
+# ITS OWN import time, which binds a separate name inside
+# ideal_spectrograph's own module namespace, pointing at the ORIGINAL
+# function. Patching calibration.calibration_database afterward has no
+# effect on that already-bound reference. We must patch the name where
+# _initialize_data() actually looks it up: inside ideal_spectrograph's own
+# globals. This is the binding that matters for every simulator.run() call.
+from hawcsimulator.ali.configurations import ideal_spectrograph as _ideal_spectrograph_mod
+
+_ideal_spectrograph_mod.calibration_database = _safe_calibration_database
 
 # ---------------------------------------------------------------------------
 # Orbit file utilities

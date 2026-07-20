@@ -23,7 +23,7 @@ echo "Job started: $(date)"
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 
-cd "$(dirname "$0")/../scripts"
+cd /project/6079534/vmcd/cesm-hawc/scripts
 python run_orbit_daily.py
 
 echo "Job finished: $(date)"

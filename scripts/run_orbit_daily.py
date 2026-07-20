@@ -64,6 +64,28 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+# Suppress non-fatal "unsendable, dropped on another thread" RuntimeErrors.
+# These come from sasktran2's Rust core objects being garbage-collected on a
+# different thread than they were created on, inside Dask's threaded
+# scheduler. They're reported via sys.unraisablehook (raised during __del__ /
+# GC, not through the normal call stack), so they cannot be caught with
+# try/except. They don't affect the correctness of completed results — just
+# terminal noise — so filter just these out while still surfacing anything
+# genuinely unexpected.
+import sys as _sys
+
+_original_unraisablehook = _sys.unraisablehook
+
+
+def _filtered_unraisablehook(unraisable):
+    msg = str(unraisable.exc_value) if unraisable.exc_value else ""
+    if "unsendable" in msg and "_core_rust" in msg:
+        return  # known non-fatal noise, silently ignore
+    _original_unraisablehook(unraisable)
+
+
+_sys.unraisablehook = _filtered_unraisablehook
+
 # Prevent astropy from downloading IERS Earth-orientation data on every run
 # (or every worker process). This data is used internally for precise solar
 # geometry, but SZA calculations don't need arcsecond-level Earth-orientation
@@ -145,6 +167,14 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+# Suppress Hamilton's per-node error boxes (SLACK_ERROR_MESSAGE + "Node
+# inputs" dump). These print via logger.error() on the "hamilton.*" logger
+# namespace for EVERY node exception, including ones we deliberately catch
+# and handle (e.g. the SZA night-side skip in process_day, which fires ~78
+# times per day). We still get full tracebacks for genuine day failures via
+# our own log.error() calls below, so this is safe to silence.
+logging.getLogger("hamilton").setLevel(logging.CRITICAL)
 
 # ---------------------------------------------------------------------------
 # Calibration database guard

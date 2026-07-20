@@ -69,8 +69,15 @@ import xarray as xr
 # geometry, but SZA calculations don't need arcsecond-level Earth-orientation
 # precision, and compute nodes typically don't have internet access anyway.
 # Must be set before any code that triggers astropy's solar position calcs.
+#
+# auto_max_age is also disabled: our simulation dates (2030) are years beyond
+# any real IERS predictive data (which only covers the recent past + a short
+# forward window from the actual current date). UT1-UTC drift is
+# millisecond-scale and irrelevant to SZA/day-night determination at these
+# timescales, so extrapolating past the data window is safe here.
 from astropy.utils import iers
 iers.conf.auto_download = False
+iers.conf.auto_max_age = None
 
 from cesm_hawc.waccm import WACCMAtmosphere
 from cesm_hawc.constituents import build_waccm_constituents

@@ -207,8 +207,8 @@ def _cache_file_path(name: str, version: str) -> str:
 def _safe_calibration_database(name: str, version: str):
     cache_file = _cache_file_path(name, version)
     if os.path.exists(cache_file):
-        return
-    _orig_calibration_database(name, version)
+        return cache_file
+    return _orig_calibration_database(name, version)
 
 
 # Patch the module attribute (covers any code that does

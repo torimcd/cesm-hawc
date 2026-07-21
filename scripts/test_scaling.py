@@ -96,6 +96,14 @@ def main():
     rod._cal_mod.calibration_database("ideal_spectrograph", "v1")
     log.info("Calibration database ready.")
 
+    # pre-warm mode-specific Mie databases (accumulation/coarse extinction),
+    # matching what main() does — without this, workers would race to
+    # build these on first concurrent use inside process_day()
+    log.info("Pre-warming mode-specific Mie databases...")
+    from cesm_hawc.constituents import warm_mode_databases
+    warm_mode_databases()
+    log.info("Mie databases ready.")
+
     # dispatch via real ProcessPoolExecutor, matching main()'s actual
     # multi-worker code path
     log.info("Dispatching %d jobs to %d worker processes...", len(jobs), N_TEST_WORKERS)

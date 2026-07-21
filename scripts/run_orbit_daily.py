@@ -557,14 +557,36 @@ def process_day(
                         break
                     raise
                 ds_obs = _l1b_image_to_dataset(data["l1b"])
-                # attach truth extinction as extra data_vars, shape
-                # (wavelength, altitude_m) — matches ds_obs's existing dims
-                # exactly since truth_wavelengths_nm == ALI_WAVELENGTHS,
-                # the same array driving ds_obs's own wavelength dim
+                # Truth extinction was computed on ALT_GRID_M (the full
+                # atmospheric state grid, e.g. 0-65km/1km steps) — a
+                # DIFFERENT grid than the instrument's actual line-of-sight
+                # sampling altitudes (ds_obs's existing altitude_m coord,
+                # e.g. 10-40km/500m steps). These don't overlap point-for-
+                # point, so we store both: the native truth (exact, no
+                # extra interpolation) on its own atm_altitude_m dim, and
+                # an interpolated version on the instrument's altitude_m
+                # dim for direct point-by-point comparison against
+                # radiance/dolp without needing to align grids later.
                 for ext_key, ext_vals in true_ext.items():
                     if ext_key == "extinction_wavelength_nm":
                         continue  # not a per-altitude field, skip
-                    ds_obs[ext_key] = (("wavelength", "altitude_m"), ext_vals)
+
+                    # native grid, exact — new "atm_altitude_m" dimension
+                    native_key = f"{ext_key}_atm"
+                    ds_obs[native_key] = (("wavelength", "atm_altitude_m"), ext_vals)
+
+                    # interpolated onto the instrument's altitude_m grid,
+                    # per wavelength (linear interp; instrument grid's
+                    # 10-40km range sits safely inside ALT_GRID_M's
+                    # 0-65km range, so no extrapolation occurs)
+                    instrument_alt = ds_obs["altitude_m"].values
+                    interp_vals = np.array([
+                        np.interp(instrument_alt, ALT_GRID_M, ext_vals[i, :])
+                        for i in range(ext_vals.shape[0])
+                    ])
+                    ds_obs[ext_key] = (("wavelength", "altitude_m"), interp_vals)
+
+                ds_obs = ds_obs.assign_coords(atm_altitude_m=ALT_GRID_M)
                 obs_l1b[label] = ds_obs
 
             if skip_obs:

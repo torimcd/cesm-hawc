@@ -60,15 +60,34 @@ import numpy as np
 
 try:
     import sasktran2 as sk
-    from aliprocessing.l2.optical import aerosol_median_radius_db
 except ImportError as e:
     raise ImportError(
-        "sasktran2 and hawcsimulator must be installed. "
+        "sasktran2 must be installed. "
         "See environment.yml for the correct install method."
     ) from e
 
 
 # ── Mode-specific Mie databases ─────────────────────────────────────────────
+# Previously this module used aliprocessing.l2.optical.aerosol_median_radius_db(),
+# a single shared database built with a fixed mode_width=1.6 -- not correct
+# for either WACCM MAM4 mode (sigma_g = 1.8 accumulation, 1.2 coarse).
+#
+# ExtinctionScatterer derives its behavior ENTIRELY from whatever
+# optical_property object it's given (see
+# sasktran2/constituent/numdenscatterer.py ExtinctionScatterer._update_numberdensity):
+# it queries that object's cross_sections() at the reference wavelength to
+# convert our supplied extinction into an implied number density, and the
+# RT solver later queries the SAME object at every other wavelength for
+# both extinction and phase function. So there's no separate "reference"
+# vs "other wavelength" logic to patch -- using a mode-width-matched
+# database as the optical_property fixes extinction AND phase function
+# consistency at every wavelength, not just the 745 nm reference point.
+#
+# Our databases are built via the identical sk.database.MieDatabase(...)
+# constructor aerosol_median_radius_db() uses (same class, same dataset
+# structure: xs_total, p11, p12, p33, lm_a1-b2, etc.) -- just with the
+# correct mode_width per mode -- so they're drop-in compatible as
+# ExtinctionScatterer's optical_property argument.
 _MODE_WIDTHS = {"aerosol_accum": 1.8, "aerosol_coarse": 1.2}
 _WAVELENGTHS_NM = np.array([470, 525, 745, 1020, 1230, 1450, 1500])
 _MEDIAN_RADIUS_NM = np.arange(10, 600, 10.0)
@@ -81,9 +100,16 @@ def _get_mode_db(mode_width: float):
     Lazily build (and cache in-process) a MieDatabase for a given
     mode_width. Building triggers a real Mie calculation the first time it's
     called for a given mode_width; sasktran2's MieDatabase caches the result
-    to disk internally (like the shared aliprocessing database does), and
-    this dict caches the in-memory handle to avoid rebuilding within a
-    single process.
+    to disk internally, and this dict caches the in-memory handle to avoid
+    rebuilding within a single process.
+
+    Applies the same single-scattering-albedo clamp
+    (ssa >= 1 -> 0.99999, then xs_scattering recomputed to match) that
+    aliprocessing.l2.optical.aerosol_median_radius_db() applies to the
+    shared database -- almost certainly a numerical-stability guard
+    against SSA hitting exactly 1.0 somewhere in the RT solver. Our
+    mode-matched databases need the same guard, since we've replaced
+    the shared database entirely rather than patching around it.
     """
     if mode_width not in _mode_dbs:
         refrac = sk.mie.refractive.H2SO4()
@@ -92,6 +118,12 @@ def _get_mode_db(mode_width: float):
             dist, refrac, _WAVELENGTHS_NM, median_radius=_MEDIAN_RADIUS_NM,
         )
         db.path()  # triggers build/cache-to-disk if not already present
+
+        # mirror aliprocessing's SSA clamp
+        ssa = db._database["xs_scattering"] / db._database["xs_total"]
+        ssa.to_numpy()[ssa.to_numpy() >= 1] = 0.99999
+        db._database["xs_scattering"] = ssa * db._database["xs_total"]
+
         _mode_dbs[mode_width] = db
     return _mode_dbs[mode_width]
 
@@ -114,8 +146,7 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
     """
     Convert number density [cm^-3] and lognormal median radius [um] to
     extinction [m^-1] using the mode-width-matched Mie database's xs_total
-    [m^2] (a distribution-weighted total cross section), rather than an
-    analytic single-radius approximation.
+    [m^2] (a distribution-weighted total cross section).
 
     extinction [m^-1] = N [m^-3] * xs_total [m^2]
 
@@ -125,10 +156,9 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
     r_um          : [um]     lognormal median radius per altitude level
     mode_width    : float    geometric standard deviation (sigma_g) of this mode
     wavelength_nm : float or array-like
-        Wavelength(s) to evaluate xs_total at. A scalar (default 745.0,
-        matching ExtinctionScatterer's reference wavelength) returns a 1D
-        array [altitude]. An array of wavelengths returns a 2D array
-        [wavelength, altitude].
+        Wavelength(s) to evaluate xs_total at. A scalar (default 745.0)
+        returns a 1D array [altitude]. An array of wavelengths returns a
+        2D array [wavelength, altitude].
 
     Returns
     -------
@@ -148,7 +178,7 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
     xs_interp = xs_at_wl.interp(median_radius=r_nm_clipped).to_numpy()  # [m^2]
 
     N_m3 = N_cm3 * 1e6  # cm^-3 -> m^-3
-    return N_m3 * xs_interp  # [m^-1], broadcasts correctly for both scalar and array wavelength_nm
+    return N_m3 * xs_interp  # [m^-1]
 
 
 def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
@@ -170,15 +200,11 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         and the ``altitude_grid`` key in ``sim_input``.
     return_extinction : bool, optional
         If True, also return the true per-mode extinction profiles [m^-1]
-        that were computed. Default False (keeps prior return signature
-        unchanged for existing callers).
+        that were computed. Default False.
     truth_wavelengths_nm : array-like, optional
         Wavelength(s) [nm] to evaluate truth extinction at, when
         return_extinction=True. Should match the wavelengths the
-        simulator is being run at (e.g. the caller's ALI_WAVELENGTHS), so
-        radiance and truth extinction can be directly compared per
-        wavelength. Defaults to [745.0] (the ExtinctionScatterer
-        reference wavelength) if not given.
+        simulator is being run at. Defaults to [745.0] if not given.
 
     Returns
     -------
@@ -186,35 +212,24 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         sasktran2 constituents dict with keys:
         ``o3``, ``no2``, ``aerosol_accum``, ``aerosol_coarse``.
 
-        The simulator's default atmosphere adds ``rayleigh``,
-        ``solar_irradiance``, and ``albedo`` automatically.
-
     dict, optional
         If ``return_extinction=True``, also returns a second dict with
         keys ``aerosol_accum_extinction_per_m`` and
         ``aerosol_coarse_extinction_per_m``, each [m^-1] with shape
-        [wavelength, altitude] (matching ``truth_wavelengths_nm`` order),
-        plus ``extinction_wavelength_nm`` giving the wavelength grid used.
-        Note: this is the true extinction at each requested wavelength —
-        distinct from the single 745 nm reference extinction that always
-        drives ExtinctionScatterer internally, regardless of
-        truth_wavelengths_nm.
+        [wavelength, altitude], plus ``extinction_wavelength_nm``.
 
     Notes
     -----
-    Both MAM4 modes are included:
+    Both MAM4 modes are included, each using its own mode-width-matched
+    Mie database (not a shared, mismatched one) for both extinction
+    magnitude AND phase function / wavelength scaling:
 
     - ``aerosol_accum``  (so4_a1, sigma_g = 1.8): fresh SO2 injection signal
     - ``aerosol_coarse`` (so4_a3, sigma_g = 1.2): aged sulfate, dominates ALI
       extinction after ~2 weeks post-injection
     """
-    # still used for phase-function (p11/p12/p33/etc) matching in
-    # ExtinctionScatterer -- only the extinction magnitude comes from the
-    # mode-matched databases above
-    mie_db = aerosol_median_radius_db()
-    ds     = mie_db.load_ds()
-    r_min  = float(ds.median_radius.min())
-    r_max  = float(ds.median_radius.max())
+    r_min = float(_MEDIAN_RADIUS_NM.min())
+    r_max = float(_MEDIAN_RADIUS_NM.max())
 
     if truth_wavelengths_nm is None:
         truth_wavelengths_nm = np.array([745.0])
@@ -247,8 +262,11 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         r_um  = profiles[r_key]
         r_nm_raw = r_um * 1e3
 
-        # reference extinction at 745 nm — this always drives
-        # ExtinctionScatterer, independent of truth_wavelengths_nm
+        mode_db = _get_mode_db(_MODE_WIDTHS[name])
+
+        # reference extinction at 745 nm — drives ExtinctionScatterer's
+        # number-density conversion; the RT solver then queries mode_db
+        # (correctly mode-width-matched) at every other wavelength too
         ext_m_ref = _extinction_from_xs_total(
             N_cm3, r_um, _MODE_WIDTHS[name], wavelength_nm=745.0
         )
@@ -256,7 +274,7 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         r_nm = np.clip(r_nm_raw, r_min, r_max)
 
         constituents[name] = sk.constituent.ExtinctionScatterer(
-            mie_db,
+            mode_db,
             altitudes_m              = alt_m,
             extinction_per_m         = ext_ref_safe,
             extinction_wavelength_nm = 745.0,

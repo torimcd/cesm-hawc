@@ -533,11 +533,21 @@ def process_day(
             for label, h2_path in h2_files.items():
                 waccm  = get_waccm(h2_path)
                 profiles = waccm.get_column_profiles(lat, lon, time_index=0)
+                # capture the true per-wavelength extinction profiles
+                # alongside the constituents dict — computed inside
+                # build_waccm_constituents() using the same mode-matched
+                # Mie databases that drive the forward model, requested at
+                # the same wavelengths (ALI_WAVELENGTHS) the simulator
+                # itself runs at, so radiance and truth extinction can be
+                # directly compared per wavelength in Phase 3.
+                constituents, true_ext = build_waccm_constituents(
+                    profiles, ALT_GRID_M, return_extinction=True,
+                    truth_wavelengths_nm=ALI_WAVELENGTHS,
+                )
                 try:
                     data = simulator.run(
                         ["front_end_radiance", "l1b"],   # forward only — no l2
-                        {**sim_input,
-                         "constituents": build_waccm_constituents(profiles, ALT_GRID_M)},
+                        {**sim_input, "constituents": constituents},
                     )
                 except ValueError as e:
                     if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
@@ -546,7 +556,16 @@ def process_day(
                         skip_obs = True
                         break
                     raise
-                obs_l1b[label] = _l1b_image_to_dataset(data["l1b"])
+                ds_obs = _l1b_image_to_dataset(data["l1b"])
+                # attach truth extinction as extra data_vars, shape
+                # (wavelength, altitude_m) — matches ds_obs's existing dims
+                # exactly since truth_wavelengths_nm == ALI_WAVELENGTHS,
+                # the same array driving ds_obs's own wavelength dim
+                for ext_key, ext_vals in true_ext.items():
+                    if ext_key == "extinction_wavelength_nm":
+                        continue  # not a per-altitude field, skip
+                    ds_obs[ext_key] = (("wavelength", "altitude_m"), ext_vals)
+                obs_l1b[label] = ds_obs
 
             if skip_obs:
                 n_skipped_night += 1

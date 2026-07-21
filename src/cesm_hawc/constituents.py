@@ -110,7 +110,7 @@ def warm_mode_databases() -> None:
 
 def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
                                mode_width: float,
-                               wavelength_nm: float = 745.0) -> np.ndarray:
+                               wavelength_nm=745.0) -> np.ndarray:
     """
     Convert number density [cm^-3] and lognormal median radius [um] to
     extinction [m^-1] using the mode-width-matched Mie database's xs_total
@@ -124,11 +124,17 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
     N_cm3         : [cm^-3]  number concentration per altitude level
     r_um          : [um]     lognormal median radius per altitude level
     mode_width    : float    geometric standard deviation (sigma_g) of this mode
-    wavelength_nm : float    wavelength to evaluate xs_total at
+    wavelength_nm : float or array-like
+        Wavelength(s) to evaluate xs_total at. A scalar (default 745.0,
+        matching ExtinctionScatterer's reference wavelength) returns a 1D
+        array [altitude]. An array of wavelengths returns a 2D array
+        [wavelength, altitude].
 
     Returns
     -------
-    extinction_per_m : [m^-1]
+    extinction_per_m : np.ndarray
+        [m^-1], shape [altitude] for scalar wavelength_nm, or
+        [wavelength, altitude] for array-like wavelength_nm.
     """
     db = _get_mode_db(mode_width)
     ds = db._database
@@ -142,10 +148,12 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
     xs_interp = xs_at_wl.interp(median_radius=r_nm_clipped).to_numpy()  # [m^2]
 
     N_m3 = N_cm3 * 1e6  # cm^-3 -> m^-3
-    return N_m3 * xs_interp  # [m^-1]
+    return N_m3 * xs_interp  # [m^-1], broadcasts correctly for both scalar and array wavelength_nm
 
 
-def build_waccm_constituents(profiles: dict, alt_m: np.ndarray) -> dict:
+def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
+                              return_extinction: bool = False,
+                              truth_wavelengths_nm=None):
     """
     Build the sasktran2 constituents dict from WACCM column profiles.
 
@@ -160,6 +168,17 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray) -> dict:
     alt_m : np.ndarray
         Altitude grid [m], must match the ``altitudes_m`` key in profiles
         and the ``altitude_grid`` key in ``sim_input``.
+    return_extinction : bool, optional
+        If True, also return the true per-mode extinction profiles [m^-1]
+        that were computed. Default False (keeps prior return signature
+        unchanged for existing callers).
+    truth_wavelengths_nm : array-like, optional
+        Wavelength(s) [nm] to evaluate truth extinction at, when
+        return_extinction=True. Should match the wavelengths the
+        simulator is being run at (e.g. the caller's ALI_WAVELENGTHS), so
+        radiance and truth extinction can be directly compared per
+        wavelength. Defaults to [745.0] (the ExtinctionScatterer
+        reference wavelength) if not given.
 
     Returns
     -------
@@ -169,6 +188,17 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray) -> dict:
 
         The simulator's default atmosphere adds ``rayleigh``,
         ``solar_irradiance``, and ``albedo`` automatically.
+
+    dict, optional
+        If ``return_extinction=True``, also returns a second dict with
+        keys ``aerosol_accum_extinction_per_m`` and
+        ``aerosol_coarse_extinction_per_m``, each [m^-1] with shape
+        [wavelength, altitude] (matching ``truth_wavelengths_nm`` order),
+        plus ``extinction_wavelength_nm`` giving the wavelength grid used.
+        Note: this is the true extinction at each requested wavelength —
+        distinct from the single 745 nm reference extinction that always
+        drives ExtinctionScatterer internally, regardless of
+        truth_wavelengths_nm.
 
     Notes
     -----
@@ -186,7 +216,13 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray) -> dict:
     r_min  = float(ds.median_radius.min())
     r_max  = float(ds.median_radius.max())
 
+    if truth_wavelengths_nm is None:
+        truth_wavelengths_nm = np.array([745.0])
+    else:
+        truth_wavelengths_nm = np.asarray(truth_wavelengths_nm, dtype=float)
+
     constituents: dict = {}
+    true_extinction: dict = {}
 
     # ── Override MIPAS O3 with WACCM O3 ──────────────────────────────────
     constituents["o3"] = sk.constituent.VMRAltitudeAbsorber(
@@ -209,20 +245,33 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray) -> dict:
     ]:
         N_cm3 = profiles[N_key]
         r_um  = profiles[r_key]
-
-        ext_m    = _extinction_from_xs_total(N_cm3, r_um, _MODE_WIDTHS[name])
         r_nm_raw = r_um * 1e3
 
-        # Zero out sub-database-floor levels (negligible aerosol loading)
-        ext_safe = np.where(r_nm_raw < r_min, 0.0, ext_m)
-        r_nm     = np.clip(r_nm_raw, r_min, r_max)
+        # reference extinction at 745 nm — this always drives
+        # ExtinctionScatterer, independent of truth_wavelengths_nm
+        ext_m_ref = _extinction_from_xs_total(
+            N_cm3, r_um, _MODE_WIDTHS[name], wavelength_nm=745.0
+        )
+        ext_ref_safe = np.where(r_nm_raw < r_min, 0.0, ext_m_ref)
+        r_nm = np.clip(r_nm_raw, r_min, r_max)
 
         constituents[name] = sk.constituent.ExtinctionScatterer(
             mie_db,
             altitudes_m              = alt_m,
-            extinction_per_m         = ext_safe,
+            extinction_per_m         = ext_ref_safe,
             extinction_wavelength_nm = 745.0,
             median_radius            = r_nm,
         )
 
+        if return_extinction:
+            # multi-wavelength truth extinction, shape [wavelength, altitude]
+            ext_multi = _extinction_from_xs_total(
+                N_cm3, r_um, _MODE_WIDTHS[name], wavelength_nm=truth_wavelengths_nm
+            )
+            ext_multi_safe = np.where(r_nm_raw[None, :] < r_min, 0.0, ext_multi)
+            true_extinction[f"{name}_extinction_per_m"] = ext_multi_safe
+
+    if return_extinction:
+        true_extinction["extinction_wavelength_nm"] = truth_wavelengths_nm
+        return constituents, true_extinction
     return constituents

@@ -146,6 +146,13 @@ INJECTION_CASES  = _o.get("injection_cases", [])
 OUT_DIR   = os.path.expanduser(_o["out_dir"])
 N_WORKERS = int(_o.get("n_workers", 1))
 
+# Optional restriction to a subset of the available date range, e.g. to run
+# a job in stages (first N months now, remainder later). If unset, all
+# available dates are processed. Dates are "YYYY-MM-DD" strings, compared
+# lexicographically (which works correctly for ISO date format).
+RUN_START_DATE = _o.get("run_start_date")  # e.g. "2030-01-01", or None
+RUN_END_DATE   = _o.get("run_end_date")    # e.g. "2030-05-31", or None
+
 # Instrument
 ALI_WAVELENGTHS = np.array(_ins["wavelengths_nm"])
 ALT_GRID_M = np.arange(
@@ -635,11 +642,27 @@ def main() -> None:
     log.info("Simulation covers %d days: %s to %s",
              len(bg_dates), bg_dates[0], bg_dates[-1])
 
+    if RUN_START_DATE or RUN_END_DATE:
+        log.info("Restricting this run to date range: %s to %s (of %s to %s available)",
+                  RUN_START_DATE or bg_dates[0], RUN_END_DATE or bg_dates[-1],
+                  bg_dates[0], bg_dates[-1])
+
     # build job list
     jobs = []
     for i, date_str in enumerate(bg_dates):
-        # map simulation day to orbit day (repeating pattern)
+        # map simulation day to orbit day (repeating pattern). Computed from
+        # i = the date's position in the FULL bg_dates list, so that
+        # filtering to a date-range subset below doesn't change which
+        # orbit_day a given date maps to. This keeps staged runs (e.g. only
+        # Jan-May now, June-July later) consistent with a single full run.
         orbit_day = i % n_orbit_days
+
+        # optional date-range restriction for staged runs
+        if RUN_START_DATE and date_str < RUN_START_DATE:
+            continue
+        if RUN_END_DATE and date_str > RUN_END_DATE:
+            continue
+
         if orbit_day not in orbit_day_idx:
             log.warning("No orbit files for orbit day %d, skipping %s",
                         orbit_day, date_str)
@@ -669,7 +692,7 @@ def main() -> None:
     log.info("Processing %d days with %d cases each",
              len(jobs), len(case_labels))
 
-    # pre-warm calibration database (idempotent — safe to call again
+    # pre-warm calibration database (now idempotent — safe to call again
     # even if a worker also triggers it via _get_simulator())
     log.info("Pre-warming calibration database...")
     try:
@@ -680,8 +703,8 @@ def main() -> None:
 
     # pre-warm mode-specific Mie databases (accumulation/coarse extinction).
     # First build triggers a real Mie calculation per mode_width; doing
-    # this once, serially, before dispatching workers avoids any
-    # unknown-safety concurrent-build behavior in sasktran2's MieDatabase.
+    # this once, serially, before dispatching workers avoids relying on
+    # unconfirmed concurrent-build safety in sasktran2's MieDatabase.
     log.info("Pre-warming mode-specific Mie databases...")
     try:
         from cesm_hawc.constituents import warm_mode_databases
@@ -689,7 +712,7 @@ def main() -> None:
         log.info("Mie databases ready.")
     except Exception as e:
         log.warning("Could not pre-warm Mie databases: %s", e)
-    
+
     # dispatch
     results: list[str] = []
     if N_WORKERS <= 1:

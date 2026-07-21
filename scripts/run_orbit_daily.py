@@ -669,7 +669,7 @@ def main() -> None:
     log.info("Processing %d days with %d cases each",
              len(jobs), len(case_labels))
 
-    # pre-warm calibration database (now idempotent — safe to call again
+    # pre-warm calibration database (idempotent — safe to call again
     # even if a worker also triggers it via _get_simulator())
     log.info("Pre-warming calibration database...")
     try:
@@ -678,6 +678,18 @@ def main() -> None:
     except Exception as e:
         log.warning("Could not pre-warm calibration database: %s", e)
 
+    # pre-warm mode-specific Mie databases (accumulation/coarse extinction).
+    # First build triggers a real Mie calculation per mode_width; doing
+    # this once, serially, before dispatching workers avoids any
+    # unknown-safety concurrent-build behavior in sasktran2's MieDatabase.
+    log.info("Pre-warming mode-specific Mie databases...")
+    try:
+        from cesm_hawc.constituents import warm_mode_databases
+        warm_mode_databases()
+        log.info("Mie databases ready.")
+    except Exception as e:
+        log.warning("Could not pre-warm Mie databases: %s", e)
+    
     # dispatch
     results: list[str] = []
     if N_WORKERS <= 1:

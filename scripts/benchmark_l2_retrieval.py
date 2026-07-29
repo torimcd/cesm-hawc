@@ -263,6 +263,30 @@ def _actual_sza(data: dict) -> float | None:
 # Profiling
 # ---------------------------------------------------------------------------
 
+def find_daytime_sample(samples: list[dict]) -> tuple[dict, str]:
+    """Find the first (sample, case_label) pair that isn't a night-side
+    tangent point, for use with inspect_profile_functions(). Does a cheap
+    forward-only check (not the full L2 profile) to avoid wasting time on
+    a full retrieval call just to find out it's night-side."""
+    simulator = rod._get_simulator()
+    for sample in samples:
+        for case_label, h2_path in sample["h2_for_day"].items():
+            waccm = rod.WACCMAtmosphere(h2_path, alt_grid_km=rod.ALT_GRID_M / 1e3)
+            profiles = waccm.get_column_profiles(
+                sample["obs"]["lat"], sample["obs"]["lon"], time_index=0
+            )
+            constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+            sim_input = {**_build_sim_input(sample["obs"]), "constituents": constituents}
+            try:
+                simulator.run(["front_end_radiance", "l1b"], sim_input)
+                return sample, case_label
+            except ValueError as e:
+                if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
+                    continue
+                raise
+    raise RuntimeError("No daytime observation found among samples -- widen n_days/n_obs_per_day")
+
+
 def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: int = 40) -> pstats.Stats:
     """Run one real observation under cProfile and print the top functions
     by cumulative time, so you can see real function names and tune
@@ -471,10 +495,10 @@ if __name__ == "__main__":
 
     simulator = rod._get_simulator()
 
-    # Run this first, on one real observation, to see actual function names
-    # in the call graph and tune RETRIEVAL_KEYWORDS above.
-    first_case = next(iter(samples[0]["h2_for_day"]))
-    inspect_profile_functions(samples[0], first_case, simulator)
+    # Run this first, on one real daytime observation, to see actual
+    # function names in the call graph and confirm L2_ENTRY_POINT_CANDIDATES.
+    inspect_sample, inspect_case = find_daytime_sample(samples)
+    inspect_profile_functions(inspect_sample, inspect_case, simulator)
 
     df = run_benchmark(samples, out_csv="l2_benchmark_results.csv")
     print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",

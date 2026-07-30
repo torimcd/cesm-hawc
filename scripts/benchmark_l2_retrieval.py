@@ -299,8 +299,10 @@ def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: i
 
     profiler = cProfile.Profile()
     profiler.enable()
-    simulator.run(FULL_L2_PRODUCTS, sim_input)
-    profiler.disable()
+    try:
+        simulator.run(FULL_L2_PRODUCTS, sim_input)
+    finally:
+        profiler.disable()
 
     stats = pstats.Stats(profiler).sort_stats("cumulative")
     stats.print_stats(top_n)
@@ -354,8 +356,16 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         profiler = cProfile.Profile()
         t0 = time.perf_counter()
         profiler.enable()
-        data_full = simulator.run(FULL_L2_PRODUCTS, sim_input)
-        profiler.disable()
+        try:
+            data_full = simulator.run(FULL_L2_PRODUCTS, sim_input)
+        finally:
+            # Must always disable, even on exception (e.g. night-side SZA
+            # ValueError) -- cProfile installs a single global C-level
+            # hook, so skipping disable() here leaves it stuck installed
+            # and the NEXT profiler.enable() call in the loop fails with
+            # "Cannot install a profile function while another profile
+            # function is being installed".
+            profiler.disable()
         t1 = time.perf_counter()
         result["total_time_s"] = t1 - t0
         result["actual_sza_deg"] = _actual_sza(data_full)

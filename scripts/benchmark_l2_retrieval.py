@@ -399,17 +399,48 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
 
 def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFrame:
     """Run the L2 benchmark across every (sample observation, case) pair.
-    Uses the same per-worker simulator singleton as production."""
+    Uses the same per-worker simulator singleton as production.
+
+    Writes each result to out_csv incrementally (flushed after every row),
+    not just once at the end -- L2 retrievals here run 100-300+s each with
+    high variance (some cases converge in ~20 function evals, others grind
+    past 100-190 without clearly converging), so a walltime kill or crash
+    partway through a large sample would otherwise lose everything already
+    computed. Safe to re-run after a kill: existing rows in out_csv are
+    preserved and new ones appended (dedup on (case_label, date_str, lat,
+    lon, time) if you re-run over the same samples -- do that check
+    yourself before concatenating old + new results)."""
     simulator = rod._get_simulator()
 
+    csv_path = out_csv
+    header_written = False
+    if csv_path is not None:
+        import os
+        header_written = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
+
     rows = []
+    n_total = sum(len(s["h2_for_day"]) for s in samples)
+    n_done = 0
     for sample in samples:
         for case_label in sample["h2_for_day"]:
-            rows.append(benchmark_observation(sample, case_label, simulator))
+            row = benchmark_observation(sample, case_label, simulator)
+            rows.append(row)
+            n_done += 1
+
+            if csv_path is not None:
+                row_df = pd.DataFrame([row])
+                row_df.to_csv(csv_path, mode="a", index=False, header=not header_written)
+                header_written = True
+
+            rod.log.info(
+                "[%d/%d] %s %s: status=%s total=%.1fs l2_marginal=%s",
+                n_done, n_total, sample["date_str"], case_label,
+                row["status"],
+                row["total_time_s"] if row["total_time_s"] is not None else float("nan"),
+                f"{row['l2_marginal_time_s']:.1f}s" if row.get("l2_marginal_time_s") is not None else "n/a",
+            )
 
     df = pd.DataFrame(rows)
-    if out_csv is not None:
-        df.to_csv(out_csv, index=False)
     return df
 
 
@@ -499,7 +530,7 @@ if __name__ == "__main__":
     # Pull real observations spread across the simulation period.
     # Start small -- 3 days x 8 obs/day x n_cases is enough to sanity-check
     # before scaling up to a bigger sample.
-    samples = sample_observations(n_days=3, n_obs_per_day=8)
+    samples = sample_observations(n_days=2, n_obs_per_day=3)
     rod.log.info("Sampled %d observations across %d days",
                  len(samples), len({s["date_str"] for s in samples}))
 

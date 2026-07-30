@@ -53,15 +53,21 @@ ASSUMPTIONS TO VERIFY:
     reports which candidate matched, so you can confirm this before
     trusting the full benchmark. If none match, update
     L2_ENTRY_POINT_CANDIDATES from that printed list.
-  - Convergence / iteration-count diagnostics are pulled from
-    data["l2"].attrs -- adjust `_extract_l2_diagnostics()` to match
-    whatever sasktran2/hawcsimulator actually exposes; the field names
-    here are placeholders.
+  - Convergence / function-evaluation diagnostics are parsed from scipy's
+    verbose=2 stdout output (captured via redirect_stdout during the
+    profiled call) rather than guessed at from data["l2"].attrs -- see
+    _parse_scipy_convergence(). This was confirmed against real output:
+    the background case in one run genuinely failed to converge ("The
+    maximum number of function evaluations is exceeded"), which the old
+    attrs-based placeholder silently reported as unknown (None) rather
+    than surfacing as a real non-convergence.
 """
 
 from __future__ import annotations
 
 import cProfile
+import contextlib
+import io
 import pstats
 import re
 import time
@@ -115,10 +121,28 @@ def build_case_labels() -> dict[str, str]:
     return case_labels
 
 
-def sample_observations(n_days: int = 3, n_obs_per_day: int = 8) -> list[dict]:
+def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42) -> list[dict]:
     """
-    Pull real observations spread across the full simulation period, using
-    the same orbit-day mapping and extraction logic as run_orbit_daily.py.
+    Pull real DAYTIME observations spread across the full simulation
+    period and across each sampled day's orbit arc, using the same
+    orbit-day mapping and extraction logic as run_orbit_daily.py.
+
+    Sample dates are chosen via a seeded random draw from n_days roughly
+    equal bins across the full date range, not evenly-spaced linspace --
+    for a Jan-to-Jul date range, linspace(0, len-1, n_days) lands on the
+    exact endpoints, which for this dataset meant both solstices: an
+    unrepresentative pair for solar-geometry variation, and confirmed by
+    an earlier run where both sampled dates had unusually narrow daytime
+    windows.
+
+    Within each sampled day, EVERY candidate observation is cheaply
+    checked for daytime via a forward-only (no L2) simulator call using
+    the background case's atmosphere -- the night-side SZA check is
+    purely geometric and doesn't depend on which case's atmosphere is
+    used, so this avoids wasting expensive full-L2 calls (100-600s each,
+    per observed benchmark data) on observations that would just be
+    skipped anyway. Only confirmed-daytime observations are returned,
+    evenly spaced across the day's daytime arc.
 
     Returns a list of dicts:
         {date_str, orbit_day, obs, h2_for_day}
@@ -141,9 +165,17 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8) -> list[dict]:
             and (not rod.RUN_END_DATE or d <= rod.RUN_END_DATE)
         ]
 
-    # evenly spaced sample dates across the full run (captures seasonal
-    # variation in solar geometry, not just one part of the run)
-    sample_idx = np.linspace(0, len(bg_dates) - 1, n_days, dtype=int)
+    # stratified random sample dates: split the date range into n_days
+    # roughly-equal bins and draw one random date per bin, so sampling
+    # still spans the full period but isn't pinned to exact endpoints.
+    rng = np.random.default_rng(seed)
+    bin_edges = np.linspace(0, len(bg_dates), n_days + 1, dtype=int)
+    sample_idx = []
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        hi = max(hi, lo + 1)
+        sample_idx.append(int(rng.integers(lo, min(hi, len(bg_dates)))))
+
+    simulator = rod._get_simulator()
 
     samples = []
     for i in sample_idx:
@@ -159,15 +191,39 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8) -> list[dict]:
         if not day_obs:
             continue
 
-        # evenly spaced subsample within the day -- spans the full orbit
-        # ground track (different latitudes/SZA) rather than clustering
-        obs_idx = np.linspace(0, len(day_obs) - 1, min(n_obs_per_day, len(day_obs)), dtype=int)
-        chosen_obs = [day_obs[j] for j in np.unique(obs_idx)]
-
         h2_for_day = {}
         for label in case_labels:
             if date_str in h2_indices[label]:
                 h2_for_day[label] = h2_indices[label][date_str]
+        if "background" not in h2_for_day:
+            continue  # need it for the cheap daytime check below
+
+        # cheap geometric daytime check against every candidate observation
+        # in the day, using the background atmosphere only -- the SZA
+        # check doesn't depend on which case's atmosphere is used, so one
+        # atmosphere suffices to classify all of them.
+        waccm = rod.WACCMAtmosphere(h2_for_day["background"], alt_grid_km=rod.ALT_GRID_M / 1e3)
+        daytime_obs = []
+        for obs in day_obs:
+            profiles = waccm.get_column_profiles(obs["lat"], obs["lon"], time_index=0)
+            constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+            sim_input = {**_build_sim_input(obs), "constituents": constituents}
+            try:
+                simulator.run(["front_end_radiance", "l1b"], sim_input)
+                daytime_obs.append(obs)
+            except ValueError as e:
+                if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
+                    continue
+                raise
+
+        rod.log.info("%s: %d/%d observations are daytime", date_str, len(daytime_obs), len(day_obs))
+        if not daytime_obs:
+            continue
+
+        # evenly spaced subsample among CONFIRMED daytime observations --
+        # spans the daytime arc rather than clustering
+        obs_idx = np.linspace(0, len(daytime_obs) - 1, min(n_obs_per_day, len(daytime_obs)), dtype=int)
+        chosen_obs = [daytime_obs[j] for j in np.unique(obs_idx)]
 
         for obs in chosen_obs:
             samples.append({
@@ -230,18 +286,53 @@ def list_retrieve_functions(stats: pstats.Stats) -> None:
             print(f"{filename:<70} {cc:>8} {ct:>10.4f}")
 
 
-def _extract_l2_diagnostics(data: dict) -> dict:
-    """Best-effort pull of retrieval diagnostics. PLACEHOLDER field names --
-    check what data['l2'] actually carries (likely in .attrs or a
-    companion 'retrieval_diagnostics' key) and adjust."""
-    l2 = data.get("l2", None)
-    if l2 is None:
-        return {"converged": None, "n_iterations": None}
-    attrs = getattr(l2, "attrs", {})
-    return {
-        "converged": attrs.get("converged", None),
-        "n_iterations": attrs.get("n_iterations", None),
-    }
+# scipy.optimize.least_squares' verbose=2 output always ends with one of
+# these termination messages (confirmed from actual run output: e.g.
+# "The maximum number of function evaluations is exceeded." for the
+# non-converged background case). Parsing this directly is more reliable
+# than guessing at hawcsimulator/skretrieval's internal attrs, which
+# turned out to carry no diagnostics at all (_extract_l2_diagnostics
+# previously returned None for every single row, including the background
+# case that actually failed to converge -- silently masking a real
+# non-convergence as status="ok").
+_SCIPY_CONVERGED_PATTERNS = [
+    (re.compile(r"`ftol` termination condition is satisfied"), "ftol"),
+    (re.compile(r"`xtol` termination condition is satisfied"), "xtol"),
+    (re.compile(r"`gtol` termination condition is satisfied"), "gtol"),
+]
+_SCIPY_NOT_CONVERGED_PATTERNS = [
+    (re.compile(r"maximum number of function evaluations is exceeded", re.IGNORECASE), "max_nfev"),
+    (re.compile(r"maximum number of iterations is exceeded", re.IGNORECASE), "max_iter"),
+]
+_SCIPY_NFEV_PATTERN = re.compile(r"Function evaluations (\d+)")
+
+
+def _parse_scipy_convergence(captured_stdout: str) -> dict:
+    """Parse scipy.optimize.least_squares' verbose=2 output (captured via
+    stdout redirection during the profiled call) for the real convergence
+    status and function-evaluation count. Returns
+    {converged, termination_reason, n_function_evaluations}, with None
+    values if no recognized message was found (e.g. verbose output isn't
+    actually coming from this call, or the format changed)."""
+    result = {"converged": None, "termination_reason": None, "n_function_evaluations": None}
+
+    for pattern, reason in _SCIPY_CONVERGED_PATTERNS:
+        if pattern.search(captured_stdout):
+            result["converged"] = True
+            result["termination_reason"] = reason
+            break
+    else:
+        for pattern, reason in _SCIPY_NOT_CONVERGED_PATTERNS:
+            if pattern.search(captured_stdout):
+                result["converged"] = False
+                result["termination_reason"] = reason
+                break
+
+    m = _SCIPY_NFEV_PATTERN.search(captured_stdout)
+    if m:
+        result["n_function_evaluations"] = int(m.group(1))
+
+    return result
 
 
 def _actual_sza(data: dict) -> float | None:
@@ -341,7 +432,8 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         "l2_entry_point": None,
         "non_retrieval_time_s": None,
         "converged": None,
-        "n_iterations": None,
+        "termination_reason": None,
+        "n_function_evaluations": None,
         "status": "ok",
         "error": None,
     }
@@ -354,10 +446,12 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         sim_input = {**_build_sim_input(obs), "constituents": constituents}
 
         profiler = cProfile.Profile()
+        stdout_capture = io.StringIO()
         t0 = time.perf_counter()
         profiler.enable()
         try:
-            data_full = simulator.run(FULL_L2_PRODUCTS, sim_input)
+            with contextlib.redirect_stdout(stdout_capture):
+                data_full = simulator.run(FULL_L2_PRODUCTS, sim_input)
         finally:
             # Must always disable, even on exception (e.g. night-side SZA
             # ValueError) -- cProfile installs a single global C-level
@@ -377,9 +471,10 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         if retrieval_time is not None:
             result["non_retrieval_time_s"] = result["total_time_s"] - retrieval_time
 
-        diag = _extract_l2_diagnostics(data_full)
+        diag = _parse_scipy_convergence(stdout_capture.getvalue())
         result["converged"] = diag["converged"]
-        result["n_iterations"] = diag["n_iterations"]
+        result["termination_reason"] = diag["termination_reason"]
+        result["n_function_evaluations"] = diag["n_function_evaluations"]
 
     except ValueError as e:
         if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
@@ -433,11 +528,14 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
                 header_written = True
 
             rod.log.info(
-                "[%d/%d] %s %s: status=%s total=%.1fs l2_marginal=%s",
+                "[%d/%d] %s %s: status=%s total=%.1fs l2_marginal=%s converged=%s (%s, nfev=%s)",
                 n_done, n_total, sample["date_str"], case_label,
                 row["status"],
                 row["total_time_s"] if row["total_time_s"] is not None else float("nan"),
                 f"{row['l2_marginal_time_s']:.1f}s" if row.get("l2_marginal_time_s") is not None else "n/a",
+                row.get("converged"),
+                row.get("termination_reason"),
+                row.get("n_function_evaluations"),
             )
 
     df = pd.DataFrame(rows)

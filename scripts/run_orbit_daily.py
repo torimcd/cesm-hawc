@@ -16,7 +16,14 @@ Orbit files are mapped to simulation dates by day-of-year offset:
 Observations are subsampled to one per OBS_CADENCE_S seconds (~12 min)
 using the center cross-track pixel (index 256) as the tangent point.
 
-Runs forward-only simulation (no l2 retrieval) for speed.
+By default runs forward-only simulation (no L2 retrieval) for speed.
+Set run_l2 = true in config.toml to additionally run full L2 retrieval
+per observation (see the [orbit_daily] section below for cost caveats --
+this is the same code path validated in benchmark_l2_retrieval.py, which
+measured 100-600s per profile for the retrieval step). Run
+extrapolate_to_full_run() from that script against your real benchmark
+CSV before submitting a large L2 production job.
+
 Multiple injection cases can be run in the same pass.
 
 Edit config.toml at the project root, then run:
@@ -24,17 +31,39 @@ Edit config.toml at the project root, then run:
 or submit via SLURM (parallel across days):
     sbatch slurm/submit_orbit_daily.sh
 
+RESUMABILITY (L2 mode): a full day of L2 retrieval can take on the order
+of 15 hours (measured ~60 daytime obs/day x 4 cases x 100-600s/profile),
+and the full 6-month run will almost certainly need multiple sequential
+sbatch submissions to fit within walltime caps. Two layers of resume
+protection:
+  - Day-level: main() skips building a job for a date whose expected
+    outputs already exist, so re-submitting doesn't reprocess completed
+    days from scratch.
+  - Profile-level (within a day): l2_diagnostics.csv is written
+    incrementally (one row per profile, flushed immediately) rather than
+    only at day-end, and each L2 profile's retrieval output is saved to
+    its own small file immediately after that profile completes. A day
+    that gets killed partway through resumes from where it left off
+    rather than redoing already-completed profiles, and a single
+    profile's unexpected failure is logged and skipped rather than
+    discarding the rest of the day's already-completed work.
+
 Output layout
 -------------
 OUT_DIR/
   background/
     YYYY-MM-DD/
-      curtain.nc          # dims [along_track, altitude_m]; coords lat, lon, time
-      orbit_track.csv     # time, lat, lon per observation
+      curtain.nc            # dims [along_track, altitude_m]; coords lat, lon, time
+      orbit_track.csv       # time, lat, lon per observation
+      l2_retrieval.nc       # only if run_l2=true; dims [along_track, ...]
+      l2_diagnostics.csv    # only if run_l2=true; convergence/timing per obs, all cases
+      l2_profiles/          # only if run_l2=true; one small .nc per (case,time)
+        <case_label>_<time>.nc
   sai_1.0Tg/
     YYYY-MM-DD/
       curtain.nc
       orbit_track.csv
+      l2_retrieval.nc        # only if run_l2=true
   sai_0.1Tg/
     ...
   sai_0.01Tg/
@@ -42,13 +71,16 @@ OUT_DIR/
 """
 from __future__ import annotations
 
+import contextlib
 import glob
 import hashlib
+import io
 import json
 import logging
 import os
 import re
 import sys
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -153,6 +185,18 @@ N_WORKERS = int(_o.get("n_workers", 1))
 RUN_START_DATE = _o.get("run_start_date")  # e.g. "2030-01-01", or None
 RUN_END_DATE   = _o.get("run_end_date")    # e.g. "2030-05-31", or None
 
+# Full L2 retrieval toggle. Off by default -- forward-only is the fast path
+# and is what production has run to date. When true, every observation
+# additionally runs skretrieval's optimal-estimation retrieval (100-600s/
+# profile measured in benchmark_l2_retrieval.py), producing data["l2"] in
+# addition to the existing front_end_radiance/l1b forward output. Product
+# list matches FULL_L2_PRODUCTS in benchmark_l2_retrieval.py exactly --
+# that's the call signature that was actually confirmed to work and profiled;
+# don't change the product list without re-validating against that script.
+RUN_L2 = bool(_o.get("run_l2", False))
+L2_PRODUCTS = ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"]
+FORWARD_ONLY_PRODUCTS = ["front_end_radiance", "l1b"]
+
 # Instrument
 ALI_WAVELENGTHS = np.array(_ins["wavelengths_nm"])
 ALT_GRID_M = np.arange(
@@ -233,6 +277,171 @@ _cal_mod.calibration_database = _safe_calibration_database
 from hawcsimulator.ali.configurations import ideal_spectrograph as _ideal_spectrograph_mod
 
 _ideal_spectrograph_mod.calibration_database = _safe_calibration_database
+
+# ---------------------------------------------------------------------------
+# L2 convergence diagnostics
+# ---------------------------------------------------------------------------
+# Ported directly from benchmark_l2_retrieval.py, where these were validated
+# against real output -- confirmed that hawcsimulator/skretrieval's l2
+# dataset .attrs carry no diagnostics at all, and that scipy.optimize.
+# least_squares' verbose=2 stdout output is the reliable source for
+# converged/not-converged status (a real background-case non-convergence
+# was caught this way; the old attrs-based approach silently reported it
+# as unknown). num_iterations/cost come straight off the l2 Dataset itself
+# as a cross-check, per the same script.
+
+_SCIPY_CONVERGED_PATTERNS = [
+    (re.compile(r"`ftol` termination condition is satisfied"), "ftol"),
+    (re.compile(r"`xtol` termination condition is satisfied"), "xtol"),
+    (re.compile(r"`gtol` termination condition is satisfied"), "gtol"),
+]
+_SCIPY_NOT_CONVERGED_PATTERNS = [
+    (re.compile(r"maximum number of function evaluations is exceeded", re.IGNORECASE), "max_nfev"),
+    (re.compile(r"maximum number of iterations is exceeded", re.IGNORECASE), "max_iter"),
+]
+_SCIPY_NFEV_PATTERN = re.compile(r"Function evaluations (\d+)")
+
+
+def _parse_scipy_convergence(captured_stdout: str) -> dict:
+    """Parse scipy.optimize.least_squares' verbose=2 output for the real
+    convergence status and function-evaluation count. Returns
+    {converged, termination_reason, n_function_evaluations}, with None
+    values if no recognized message was found."""
+    result = {"converged": None, "termination_reason": None, "n_function_evaluations": None}
+
+    for pattern, reason in _SCIPY_CONVERGED_PATTERNS:
+        if pattern.search(captured_stdout):
+            result["converged"] = True
+            result["termination_reason"] = reason
+            break
+    else:
+        for pattern, reason in _SCIPY_NOT_CONVERGED_PATTERNS:
+            if pattern.search(captured_stdout):
+                result["converged"] = False
+                result["termination_reason"] = reason
+                break
+
+    m = _SCIPY_NFEV_PATTERN.search(captured_stdout)
+    if m:
+        result["n_function_evaluations"] = int(m.group(1))
+
+    return result
+
+
+def _extract_l2_native_diagnostics(l2_obj) -> dict:
+    """Pull num_iterations/cost directly from the l2 Dataset, as a
+    cross-check against the stdout-parsed convergence info."""
+    if l2_obj is None:
+        return {"l2_num_iterations": None, "l2_final_cost": None}
+    try:
+        n_iter = int(l2_obj["num_iterations"].values) if "num_iterations" in l2_obj else None
+    except Exception:
+        n_iter = None
+    try:
+        cost = float(l2_obj["cost"].values) if "cost" in l2_obj else None
+    except Exception:
+        cost = None
+    return {"l2_num_iterations": n_iter, "l2_final_cost": cost}
+
+
+# ---------------------------------------------------------------------------
+# L2 per-day resumability: incremental diagnostics CSV + per-profile saves
+# ---------------------------------------------------------------------------
+# A full day of L2 retrieval can take ~15 hours (measured ~60 daytime obs/day
+# x 4 cases x 100-600s/profile in benchmark_l2_retrieval.py). Without this,
+# a walltime kill or one bad profile partway through a day would discard
+# everything computed that day, forward output included. This mirrors the
+# resume machinery already validated in benchmark_l2_retrieval.py.
+
+L2_DIAG_FIELDNAMES = [
+    "case_label", "time", "lat", "lon", "elapsed_s",
+    "converged", "termination_reason", "n_function_evaluations",
+    "l2_num_iterations", "l2_final_cost", "status", "error",
+]
+
+
+def _safe_time_str(t) -> str:
+    """Filesystem-safe representation of an observation time, used as part
+    of per-profile filenames and as the resume-matching key alongside
+    case_label."""
+    return str(pd.Timestamp(t)).replace(" ", "T").replace(":", "")
+
+
+def _l2_diag_csv_path(out_root: str, sim_date_str: str) -> str:
+    bg_out = os.path.join(out_root, "background", sim_date_str)
+    return os.path.join(bg_out, "l2_diagnostics.csv")
+
+
+def _l2_profile_path(out_root: str, case_label: str, sim_date_str: str, obs_time) -> str:
+    case_out = os.path.join(out_root, case_label, sim_date_str, "l2_profiles")
+    return os.path.join(case_out, f"{case_label}_{_safe_time_str(obs_time)}.nc")
+
+
+def _load_completed_l2_keys(csv_path: str) -> set[tuple[str, str]]:
+    """Return {(case_label, time_str)} already present in an existing
+    l2_diagnostics.csv, so a resumed day skips re-running those profiles'
+    L2 retrieval. If the file's schema doesn't match L2_DIAG_FIELDNAMES
+    (e.g. left over from an earlier version of this script), back it up
+    and start fresh rather than risk corrupting it with inconsistent
+    columns -- same protection added to benchmark_l2_retrieval.py after a
+    real schema-drift corruption there."""
+    if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+        return set()
+
+    with open(csv_path) as f:
+        existing_header = f.readline().strip().split(",")
+    if existing_header != L2_DIAG_FIELDNAMES:
+        backup_path = csv_path + ".schema_mismatch.bak"
+        log.warning(
+            "%s has a different column schema than the current script "
+            "(existing: %s | current: %s). Backing up to %s and starting "
+            "fresh rather than risking corruption.",
+            csv_path, existing_header, L2_DIAG_FIELDNAMES, backup_path,
+        )
+        os.rename(csv_path, backup_path)
+        return set()
+
+    try:
+        existing = pd.read_csv(csv_path, usecols=["case_label", "time"])
+    except Exception as e:
+        log.warning("Could not read %s for resume (%s); treating as no prior progress.",
+                    csv_path, e)
+        return set()
+    return {(str(r.case_label), str(pd.Timestamp(r.time))) for r in existing.itertuples(index=False)}
+
+
+def _append_l2_diag_row(csv_path: str, row: dict) -> None:
+    """Append one L2 diagnostics row immediately, flushed to disk, rather
+    than accumulating in memory for a single end-of-day write."""
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    header_needed = not (os.path.exists(csv_path) and os.path.getsize(csv_path) > 0)
+    row_df = pd.DataFrame([row], columns=L2_DIAG_FIELDNAMES)
+    row_df.to_csv(csv_path, mode="a", index=False, header=header_needed)
+
+
+def _save_l2_profile(l2_obj, out_path: str) -> tuple[bool, str | None]:
+    """Save one profile's L2 output immediately after retrieval, so a
+    day-level kill preserves already-completed L2 profiles instead of
+    losing them when the end-of-day xr.concat step never runs. Returns
+    (saved, error)."""
+    if l2_obj is None:
+        return False, "l2 object is None"
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    try:
+        l2_obj.to_netcdf(out_path)
+        return True, None
+    except Exception as e:
+        return False, f"to_netcdf failed: {type(e).__name__}: {e}"
+
+
+def _load_saved_l2_profile(path: str) -> xr.Dataset | None:
+    try:
+        return xr.open_dataset(path).load()
+    except Exception as e:
+        log.warning("Could not reload saved L2 profile %s (%s) -- it will be "
+                    "excluded from this day's l2_retrieval.nc curtain.", path, e)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Orbit file utilities
@@ -470,6 +679,28 @@ def _get_simulator() -> IdealALISimulator:
 
 
 # ---------------------------------------------------------------------------
+# Day-level resume (main() skips days already fully completed)
+# ---------------------------------------------------------------------------
+
+def _day_already_done(date_str: str, case_labels: dict[str, str], out_root: str) -> bool:
+    """
+    True if this date's expected outputs already exist for every case, so
+    main() can skip re-submitting it. Coarse-grained (day-level) -- a day
+    that's only partially done (e.g. killed mid-L2) is NOT considered done
+    here and will be resubmitted; process_day()'s profile-level resume
+    (via l2_diagnostics.csv / saved l2_profiles) then picks up only the
+    remaining work for that day rather than redoing it all.
+    """
+    for label in case_labels:
+        case_dir = os.path.join(out_root, label, date_str)
+        if not os.path.exists(os.path.join(case_dir, "curtain.nc")):
+            return False
+        if RUN_L2 and not os.path.exists(os.path.join(case_dir, "l2_retrieval.nc")):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Per-day simulation
 # ---------------------------------------------------------------------------
 
@@ -480,10 +711,19 @@ def process_day(
     out_root: str,
 ) -> str:
     """
-    Run forward ALI simulations for all observations on one day, for all cases.
+    Run ALI simulations for all observations on one day, for all cases.
+    Forward-only (front_end_radiance/l1b) by default; additionally runs
+    full L2 retrieval per observation when RUN_L2 is true.
 
     h2_files maps a short label (e.g. "background", "sai_1.0Tg") to the
     h2 file path for that case on this date.
+
+    L2 mode is resumable within a day: already-completed (case_label,
+    time) profiles (per l2_diagnostics.csv) are skipped, and their saved
+    per-profile .nc files are reloaded for inclusion in this day's final
+    l2_retrieval.nc curtain. A single profile's unexpected failure is
+    logged and recorded in l2_diagnostics.csv with status="error" rather
+    than aborting the rest of the day.
 
     Returns short status string.
     """
@@ -498,15 +738,36 @@ def process_day(
                 )
             return waccm_cache[path]
 
-        # results[label] = list of l1b datasets
+        products = L2_PRODUCTS if RUN_L2 else FORWARD_ONLY_PRODUCTS
+
+        # results[label] = list of l1b datasets (forward output, unchanged)
         results: dict[str, list[xr.Dataset]] = {label: [] for label in h2_files}
+        # l2_results[label] = list of raw l2 xr.Dataset objects, in the same
+        # order as successful_obs, so the end-of-day concat lines up with
+        # the forward curtain's along_track coordinates. Populated either
+        # from a fresh retrieval this run or reloaded from a previous run's
+        # saved l2_profiles/ file (profile-level resume).
+        l2_results: dict[str, list[xr.Dataset]] = {label: [] for label in h2_files}
+
+        l2_diag_csv_path = _l2_diag_csv_path(out_root, sim_date_str)
+        completed_l2_keys: set[tuple[str, str]] = set()
+        if RUN_L2:
+            completed_l2_keys = _load_completed_l2_keys(l2_diag_csv_path)
+            if completed_l2_keys:
+                log.info("[%s] Resuming L2: %d (case, time) profiles already done",
+                          sim_date_str, len(completed_l2_keys))
+
         successful_obs: list[dict] = []  # obs that passed the daytime/SZA check
         n_skipped_night = 0
+
+        n_l2_done_this_run = 0
+        l2_day_t0 = time.perf_counter()
 
         for obs in observations:
             t   = obs["time"]
             lat = obs["lat"]
             lon = obs["lon"]
+            time_key = str(pd.Timestamp(t))
 
             sim_input = {
                 "tangent_latitude":    float(lat),
@@ -544,11 +805,33 @@ def process_day(
                     profiles, ALT_GRID_M, return_extinction=True,
                     truth_wavelengths_nm=ALI_WAVELENGTHS,
                 )
+
+                already_done = RUN_L2 and (label, time_key) in completed_l2_keys
+
+                l2_stdout = io.StringIO()
+                obs_t0 = time.perf_counter()
                 try:
-                    data = simulator.run(
-                        ["front_end_radiance", "l1b"],   # forward only — no l2
-                        {**sim_input, "constituents": constituents},
-                    )
+                    if already_done:
+                        # Skip the expensive L2 retrieval entirely, but we
+                        # still need a forward (l1b) result for the day's
+                        # curtain.nc -- forward-only is cheap (~seconds),
+                        # so just recompute it rather than also persisting
+                        # l1b state from the earlier run.
+                        data = simulator.run(
+                            FORWARD_ONLY_PRODUCTS,
+                            {**sim_input, "constituents": constituents},
+                        )
+                    elif RUN_L2:
+                        with contextlib.redirect_stdout(l2_stdout):
+                            data = simulator.run(
+                                products,
+                                {**sim_input, "constituents": constituents},
+                            )
+                    else:
+                        data = simulator.run(
+                            products,
+                            {**sim_input, "constituents": constituents},
+                        )
                 except ValueError as e:
                     if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
                         # night-side tangent point — physically unobservable,
@@ -556,6 +839,32 @@ def process_day(
                         skip_obs = True
                         break
                     raise
+                except Exception:
+                    # An unexpected failure on THIS profile (not the known
+                    # night-side case) must not discard everything already
+                    # completed today. Log it, record it in the diagnostics
+                    # CSV as an error row, and move on to the next
+                    # observation/case rather than propagating up to the
+                    # top-level except that would return "FAIL" for the
+                    # whole day.
+                    tb = traceback.format_exc()
+                    log.error(
+                        "[%s] %s at %s FAILED (unexpected exception), skipping "
+                        "this profile only:\n%s",
+                        sim_date_str, label, time_key, tb,
+                    )
+                    if RUN_L2:
+                        _append_l2_diag_row(l2_diag_csv_path, {
+                            "case_label": label, "time": time_key,
+                            "lat": lat, "lon": lon, "elapsed_s": None,
+                            "converged": None, "termination_reason": None,
+                            "n_function_evaluations": None,
+                            "l2_num_iterations": None, "l2_final_cost": None,
+                            "status": "error", "error": str(tb)[-500:],
+                        })
+                    continue
+                obs_elapsed = time.perf_counter() - obs_t0
+
                 ds_obs = _l1b_image_to_dataset(data["l1b"])
                 # Truth extinction was computed on ALT_GRID_M (the full
                 # atmospheric state grid, e.g. 0-65km/1km steps) — a
@@ -588,6 +897,55 @@ def process_day(
 
                 ds_obs = ds_obs.assign_coords(atm_altitude_m=ALT_GRID_M)
                 obs_l1b[label] = ds_obs
+
+                if RUN_L2:
+                    if already_done:
+                        # Reload the previous run's saved profile so it's
+                        # included in this day's final l2_retrieval.nc
+                        # curtain, in the same position as newly-computed
+                        # profiles.
+                        saved_path = _l2_profile_path(out_root, label, sim_date_str, t)
+                        reloaded = _load_saved_l2_profile(saved_path)
+                        if reloaded is not None:
+                            l2_results[label].append(reloaded)
+                    else:
+                        l2_obj = data.get("l2")
+                        diag = _parse_scipy_convergence(l2_stdout.getvalue())
+                        native_diag = _extract_l2_native_diagnostics(l2_obj)
+
+                        if l2_obj is not None:
+                            l2_results[label].append(l2_obj)
+                            saved_path = _l2_profile_path(out_root, label, sim_date_str, t)
+                            saved_ok, save_err = _save_l2_profile(l2_obj, saved_path)
+                            if not saved_ok:
+                                log.warning("[%s] %s at %s: failed to save L2 "
+                                            "profile (%s)", sim_date_str, label,
+                                            time_key, save_err)
+
+                        _append_l2_diag_row(l2_diag_csv_path, {
+                            "case_label": label, "time": time_key,
+                            "lat": lat, "lon": lon, "elapsed_s": obs_elapsed,
+                            "converged": diag["converged"],
+                            "termination_reason": diag["termination_reason"],
+                            "n_function_evaluations": diag["n_function_evaluations"],
+                            "l2_num_iterations": native_diag["l2_num_iterations"],
+                            "l2_final_cost": native_diag["l2_final_cost"],
+                            "status": "ok", "error": None,
+                        })
+
+                        n_l2_done_this_run += 1
+                        # L2 profiles are expensive (100-600s measured) — log
+                        # progress periodically so a running job isn't silent
+                        # for hours.
+                        if n_l2_done_this_run % 10 == 0:
+                            elapsed_min = (time.perf_counter() - l2_day_t0) / 60
+                            log.info(
+                                "[%s] L2 progress: %d NEW profiles done this run "
+                                "(%d resumed from a previous run), %.1f min elapsed, "
+                                "last=%s (%.1fs, converged=%s)",
+                                sim_date_str, n_l2_done_this_run, len(completed_l2_keys),
+                                elapsed_min, label, obs_elapsed, diag["converged"],
+                            )
 
             if skip_obs:
                 n_skipped_night += 1
@@ -623,6 +981,56 @@ def process_day(
             )
             curtain.to_netcdf(os.path.join(case_out, "curtain.nc"))
 
+        # save L2 retrieval output per case, if requested. Same along_track
+        # coordinate convention as the forward curtain, but kept as its own
+        # file since the L2 dataset's internal grid/dims are independent of
+        # the forward curtain's altitude_m. Includes both profiles computed
+        # this run and any reloaded from a previous run's l2_profiles/ save
+        # (profile-level resume), so a day finished across multiple
+        # sbatch submissions still ends up with one complete curtain.
+        if RUN_L2:
+            for label, l2_list in l2_results.items():
+                if not l2_list:
+                    continue
+                case_out = os.path.join(out_root, label, sim_date_str)
+                os.makedirs(case_out, exist_ok=True)
+                try:
+                    l2_curtain = xr.concat(l2_list, dim="along_track")
+                    l2_curtain = l2_curtain.assign_coords(
+                        lat=("along_track", lats),
+                        lon=("along_track", lons),
+                        time=("along_track", times),
+                    )
+                    l2_curtain.to_netcdf(os.path.join(case_out, "l2_retrieval.nc"))
+                except Exception:
+                    # Don't let an L2-save failure (e.g. inconsistent dims
+                    # across profiles) take down the forward output for the
+                    # day, which has already been written above. The
+                    # per-profile l2_profiles/*.nc files are unaffected by
+                    # this and remain available for a later resume/retry of
+                    # just the concat step.
+                    log.error(
+                        "[%s] failed to concat/save l2_retrieval.nc for case %s "
+                        "(per-profile l2_profiles/*.nc are still on disk and "
+                        "safe):\n%s",
+                        sim_date_str, label, traceback.format_exc(),
+                    )
+
+            if os.path.exists(l2_diag_csv_path):
+                diag_df = pd.read_csv(l2_diag_csv_path)
+                n_conv = int(diag_df["converged"].sum(skipna=True)) if "converged" in diag_df else 0
+                n_conv_known = int(diag_df["converged"].notna().sum())
+                n_errors = int((diag_df["status"] == "error").sum()) if "status" in diag_df else 0
+                if n_conv_known and n_conv < n_conv_known:
+                    log.warning(
+                        "[%s] L2 convergence: %d/%d converged (%d did not)",
+                        sim_date_str, n_conv, n_conv_known, n_conv_known - n_conv,
+                    )
+                if n_errors:
+                    log.warning("[%s] L2: %d profile(s) failed with an unexpected "
+                                "error (status=error in l2_diagnostics.csv)",
+                                sim_date_str, n_errors)
+
         # save orbit track csv (same for all cases) — daytime obs only
         track_df = pd.DataFrame({
             "time": [o["time"].isoformat() for o in successful_obs],
@@ -634,8 +1042,9 @@ def process_day(
         os.makedirs(bg_out, exist_ok=True)
         track_df.to_csv(os.path.join(bg_out, "orbit_track.csv"), index=False)
 
-        log.info("[%s] %d/%d obs (daytime), %d cases",
-                  sim_date_str, len(successful_obs), len(observations), len(h2_files))
+        log.info("[%s] %d/%d obs (daytime), %d cases%s",
+                  sim_date_str, len(successful_obs), len(observations), len(h2_files),
+                  " (L2 retrieval on)" if RUN_L2 else "")
         return f"OK   {sim_date_str}  ({len(successful_obs)}/{len(observations)} obs)"
 
     except Exception:
@@ -650,6 +1059,14 @@ def process_day(
 
 def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    if RUN_L2:
+        log.warning(
+            "RUN_L2 is enabled. L2 retrieval measured at 100-600s/profile in "
+            "benchmark_l2_retrieval.py -- if you haven't already, run "
+            "extrapolate_to_full_run() against your real l2_benchmark_results.csv "
+            "to confirm walltime/CPU-hour budget before this job scales up."
+        )
 
     # load orbit files and build day index
     log.info("Loading orbit file index...")
@@ -690,6 +1107,7 @@ def main() -> None:
 
     # build job list
     jobs = []
+    n_already_done = 0
     for i, date_str in enumerate(bg_dates):
         # map simulation day to orbit day (repeating pattern). Computed from
         # i = the date's position in the FULL bg_dates list, so that
@@ -707,6 +1125,17 @@ def main() -> None:
         if orbit_day not in orbit_day_idx:
             log.warning("No orbit files for orbit day %d, skipping %s",
                         orbit_day, date_str)
+            continue
+
+        # Day-level resume: skip dates whose expected outputs already exist
+        # for every case, so re-submitting a job (e.g. after a walltime
+        # limit forced multiple sequential sbatch runs across the 6-month
+        # period) doesn't reprocess completed days from scratch. Days that
+        # are only PARTIALLY done (e.g. L2 killed partway through) are not
+        # matched here and get resubmitted -- process_day()'s profile-level
+        # resume then picks up only the remaining work for that day.
+        if _day_already_done(date_str, case_labels, OUT_DIR):
+            n_already_done += 1
             continue
 
         sim_date = pd.Timestamp(date_str)
@@ -730,6 +1159,9 @@ def main() -> None:
 
         jobs.append((date_str, obs, h2_for_day, OUT_DIR))
 
+    if n_already_done:
+        log.info("Skipping %d day(s) already fully completed from a previous run",
+                  n_already_done)
     log.info("Processing %d days with %d cases each",
              len(jobs), len(case_labels))
 

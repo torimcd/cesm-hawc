@@ -509,20 +509,48 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
     return result
 
 
+def _load_completed_keys(csv_path: str | None) -> set[tuple[str, str, str]]:
+    """Read an existing benchmark CSV (if any) and return the set of
+    (date_str, case_label, time) keys already completed, so a re-run
+    after a walltime kill skips them instead of redoing 100-600s of work
+    that's already captured. This has now happened twice -- worth having
+    real resume support rather than relying on manual dedup afterward."""
+    import os
+    if not csv_path or not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+        return set()
+    try:
+        existing = pd.read_csv(csv_path, usecols=["date_str", "case_label", "time"])
+    except Exception:
+        return set()
+    return {
+        (str(r.date_str), str(r.case_label), str(pd.Timestamp(r.time)))
+        for r in existing.itertuples(index=False)
+    }
+
+
 def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFrame:
     """Run the L2 benchmark across every (sample observation, case) pair.
     Uses the same per-worker simulator singleton as production.
 
     Writes each result to out_csv incrementally (flushed after every row),
-    not just once at the end -- L2 retrievals here run 100-300+s each with
-    high variance (some cases converge in ~20 function evals, others grind
-    past 100-190 without clearly converging), so a walltime kill or crash
+    not just once at the end -- L2 retrievals here run 100-600+s each with
+    high variance (some cases converge in ~25 function evals, others hit
+    the 200-eval cap without converging), so a walltime kill or crash
     partway through a large sample would otherwise lose everything already
-    computed. Safe to re-run after a kill: existing rows in out_csv are
-    preserved and new ones appended (dedup on (case_label, date_str, lat,
-    lon, time) if you re-run over the same samples -- do that check
-    yourself before concatenating old + new results)."""
+    computed.
+
+    RESUMABLE: if out_csv already has rows from a previous (killed) run
+    over the same samples, matching (date_str, case_label, time) combos
+    are skipped rather than recomputed. Returns the FULL combined dataset
+    (old + newly computed rows), read back from out_csv, so downstream
+    summarize()/estimate_total_profile_count() see everything -- not just
+    whatever this particular invocation computed."""
     simulator = rod._get_simulator()
+
+    completed = _load_completed_keys(out_csv)
+    if completed:
+        rod.log.info("Resuming: %d results already in %s, matching samples will be skipped",
+                      len(completed), out_csv)
 
     csv_path = out_csv
     header_written = False
@@ -530,13 +558,17 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
         import os
         header_written = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
 
-    rows = []
     n_total = sum(len(s["h2_for_day"]) for s in samples)
     n_done = 0
+    n_skipped_existing = 0
     for sample in samples:
         for case_label in sample["h2_for_day"]:
+            key = (sample["date_str"], case_label, str(pd.Timestamp(sample["obs"]["time"])))
+            if key in completed:
+                n_skipped_existing += 1
+                continue
+
             row = benchmark_observation(sample, case_label, simulator)
-            rows.append(row)
             n_done += 1
 
             if csv_path is not None:
@@ -545,8 +577,9 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
                 header_written = True
 
             rod.log.info(
-                "[%d/%d] %s %s: status=%s total=%.1fs l2_marginal=%s converged=%s (%s, nfev=%s)",
-                n_done, n_total, sample["date_str"], case_label,
+                "[%d/%d new, %d already done] %s %s: status=%s total=%.1fs l2_marginal=%s converged=%s (%s, nfev=%s)",
+                n_done, n_total - n_skipped_existing, n_skipped_existing,
+                sample["date_str"], case_label,
                 row["status"],
                 row["total_time_s"] if row["total_time_s"] is not None else float("nan"),
                 f"{row['l2_marginal_time_s']:.1f}s" if row.get("l2_marginal_time_s") is not None else "n/a",
@@ -555,8 +588,14 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
                 row.get("n_function_evaluations"),
             )
 
-    df = pd.DataFrame(rows)
-    return df
+    if n_skipped_existing:
+        rod.log.info("Skipped %d already-completed samples from a previous run", n_skipped_existing)
+
+    if csv_path is not None:
+        import os
+        if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+            return pd.read_csv(csv_path)
+    return pd.DataFrame([])
 
 
 # ---------------------------------------------------------------------------

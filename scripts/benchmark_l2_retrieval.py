@@ -352,6 +352,60 @@ def _parse_scipy_convergence(captured_stdout: str) -> dict:
     return result
 
 
+def _save_l2_output(data_full: dict, out_path_base: str) -> dict:
+    """Save the actual L2 retrieval output to disk, not just timing/
+    convergence metadata. Tries .to_netcdf() first since everything else
+    in this pipeline (l1b, WACCM data) is xarray-based -- confirm this is
+    right for your case via inspect_profile_functions()'s structure dump
+    before trusting it at scale. Falls back to pickling the raw object if
+    it's not netcdf-writable, so nothing is silently lost even if the
+    structure turns out to differ from what's handled here.
+
+    Saves both data_full['l2'] and data_full['sk2_atmosphere'] (if
+    present) as separate files, since inspect_profile_functions() showed
+    both exist as distinct products in FULL_L2_PRODUCTS.
+
+    Returns {saved, format, paths (dict per product), error}.
+    """
+    result = {"saved": False, "format": None, "paths": {}, "error": None}
+    errors = []
+
+    for product_name in ("l2", "sk2_atmosphere"):
+        obj = data_full.get(product_name)
+        if obj is None:
+            continue
+
+        path_nc = f"{out_path_base}_{product_name}.nc"
+        try:
+            if hasattr(obj, "to_netcdf"):
+                obj.to_netcdf(path_nc)
+                result["paths"][product_name] = path_nc
+                result["saved"] = True
+                result["format"] = "netcdf"
+                continue
+        except Exception as e:
+            errors.append(f"{product_name}: to_netcdf failed: {type(e).__name__}: {e}")
+
+        # fallback: pickle whatever it is
+        try:
+            import pickle
+            path_pkl = f"{out_path_base}_{product_name}.pkl"
+            with open(path_pkl, "wb") as f:
+                pickle.dump(obj, f)
+            result["paths"][product_name] = path_pkl
+            result["saved"] = True
+            if result["format"] is None:
+                result["format"] = "pickle"
+            elif result["format"] == "netcdf":
+                result["format"] = "mixed"
+        except Exception as e:
+            errors.append(f"{product_name}: pickle failed: {type(e).__name__}: {e}")
+
+    if errors:
+        result["error"] = " | ".join(errors)
+    return result
+
+
 def _actual_sza(data: dict) -> float | None:
     """Pull the SZA the simulator actually computed for this observation
     (from the l1b dataset), rather than a value we specified -- since
@@ -395,10 +449,47 @@ def find_daytime_sample(samples: list[dict]) -> tuple[dict, str]:
     raise RuntimeError("No daytime observation found among samples -- widen n_days/n_obs_per_day")
 
 
+def _describe_l2_output(l2_obj, max_depth: int = 2, _depth: int = 0) -> None:
+    """Print the real structure of whatever data_full['l2'] actually is --
+    type, and for common container types (dict, xarray Dataset/DataArray),
+    its keys/variables/coords/shape. We never inspected this directly
+    before (only .attrs, which turned out empty) -- printing the real
+    thing avoids guessing at a save format."""
+    indent = "  " * _depth
+    print(f"{indent}type: {type(l2_obj)}")
+
+    if isinstance(l2_obj, dict):
+        print(f"{indent}dict keys: {list(l2_obj.keys())}")
+        if _depth < max_depth:
+            for k, v in l2_obj.items():
+                print(f"{indent}  ['{k}']:")
+                _describe_l2_output(v, max_depth, _depth + 2)
+        return
+
+    # xarray Dataset/DataArray have these attrs; check by duck-typing
+    # rather than importing xarray here, since we don't know for sure
+    # what type this is until we see it.
+    if hasattr(l2_obj, "data_vars"):
+        print(f"{indent}xarray-like Dataset")
+        print(f"{indent}data_vars: {list(l2_obj.data_vars)}")
+        print(f"{indent}coords: {list(l2_obj.coords)}")
+        print(f"{indent}dims: {dict(l2_obj.sizes) if hasattr(l2_obj, 'sizes') else l2_obj.dims}")
+        return
+    if hasattr(l2_obj, "dims") and hasattr(l2_obj, "values"):
+        print(f"{indent}xarray-like DataArray, shape={getattr(l2_obj, 'shape', None)}, "
+              f"dims={l2_obj.dims}")
+        return
+
+    print(f"{indent}dir() (public attrs): "
+          f"{[a for a in dir(l2_obj) if not a.startswith('_')]}")
+
+
 def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: int = 40) -> pstats.Stats:
     """Run one real observation under cProfile and print the top functions
     by cumulative time, so you can see real function names and tune
-    RETRIEVAL_KEYWORDS before running the full benchmark."""
+    RETRIEVAL_KEYWORDS before running the full benchmark. Also prints the
+    real structure of data_full['l2'] (the actual retrieval output) so a
+    save format can be chosen based on what's actually there."""
     h2_path = sample["h2_for_day"][case_label]
     waccm = rod.WACCMAtmosphere(h2_path, alt_grid_km=rod.ALT_GRID_M / 1e3)
     profiles = waccm.get_column_profiles(sample["obs"]["lat"], sample["obs"]["lon"], time_index=0)
@@ -408,7 +499,7 @@ def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: i
     profiler = cProfile.Profile()
     profiler.enable()
     try:
-        simulator.run(FULL_L2_PRODUCTS, sim_input)
+        data_full = simulator.run(FULL_L2_PRODUCTS, sim_input)
     finally:
         profiler.disable()
 
@@ -428,13 +519,22 @@ def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: i
             "L2_ENTRY_POINT_CANDIDATES accordingly."
         )
 
+    print("\n--- structure of data_full['l2'] (the actual retrieval output) ---")
+    _describe_l2_output(data_full.get("l2"))
+    print("\n--- structure of data_full['sk2_atmosphere'] (retrieved atmospheric state?) ---")
+    _describe_l2_output(data_full.get("sk2_atmosphere"))
+
     return stats
 
 
-def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
+def benchmark_observation(sample: dict, case_label: str, simulator, save_output_dir: str | None = None) -> dict:
     """Run the full-L2 simulator call once for one real (case, observation)
     pair, under cProfile, and split total time into 'retrieval' vs 'other'
-    based on RETRIEVAL_KEYWORDS matching against function names."""
+    based on RETRIEVAL_KEYWORDS matching against function names.
+
+    If save_output_dir is given, also persists the actual retrieval output
+    (data_full['l2'] and ['sk2_atmosphere']) to disk via _save_l2_output(),
+    not just timing/convergence metadata -- see l2_output_* result fields."""
     obs = sample["obs"]
     result = {
         "case_label": case_label,
@@ -451,8 +551,13 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         "converged": None,
         "termination_reason": None,
         "n_function_evaluations": None,
+        "l2_output_saved": False,
+        "l2_output_format": None,
+        "l2_output_paths": None,
+        "l2_output_save_error": None,
         "status": "ok",
         "error": None,
+        "error_traceback": None,
     }
 
     try:
@@ -493,6 +598,22 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         result["termination_reason"] = diag["termination_reason"]
         result["n_function_evaluations"] = diag["n_function_evaluations"]
 
+        if save_output_dir is not None:
+            # Save for BOTH converged and non-converged cases -- a failed
+            # retrieval's output is still scientifically informative (what
+            # did it converge TOWARD before hitting max_nfev?).
+            import os
+            os.makedirs(save_output_dir, exist_ok=True)
+            safe_time = str(pd.Timestamp(obs["time"])).replace(" ", "T").replace(":", "")
+            out_path_base = os.path.join(
+                save_output_dir, f"{sample['date_str']}_{case_label}_{safe_time}"
+            )
+            save_info = _save_l2_output(data_full, out_path_base)
+            result["l2_output_saved"] = save_info["saved"]
+            result["l2_output_format"] = save_info["format"]
+            result["l2_output_paths"] = str(save_info["paths"]) if save_info["paths"] else None
+            result["l2_output_save_error"] = save_info["error"]
+
     except ValueError as e:
         if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
             # night-side tangent point, same skip condition as process_day
@@ -507,6 +628,22 @@ def benchmark_observation(sample: dict, case_label: str, simulator) -> dict:
         result["error_traceback"] = traceback.format_exc()
 
     return result
+
+
+# Must match benchmark_observation()'s result dict keys, in order. Used to
+# detect a schema mismatch against an existing out_csv before appending --
+# this fixed a real bug where the same output filename got reused across
+# script versions during iterative development (this one added
+# termination_reason/n_function_evaluations/error_traceback after the file
+# already had a header without them), silently corrupting the CSV with
+# inconsistent column counts across appended chunks.
+_RESULT_FIELDNAMES = [
+    "case_label", "date_str", "orbit_day", "lat", "lon", "time",
+    "actual_sza_deg", "total_time_s", "l2_marginal_time_s", "l2_entry_point",
+    "non_retrieval_time_s", "converged", "termination_reason",
+    "n_function_evaluations", "l2_output_saved", "l2_output_format",
+    "l2_output_paths", "l2_output_save_error", "status", "error", "error_traceback",
+]
 
 
 def _load_completed_keys(csv_path: str | None) -> set[tuple[str, str, str]]:
@@ -528,9 +665,14 @@ def _load_completed_keys(csv_path: str | None) -> set[tuple[str, str, str]]:
     }
 
 
-def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFrame:
+def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_dir: str | None = None) -> pd.DataFrame:
     """Run the L2 benchmark across every (sample observation, case) pair.
     Uses the same per-worker simulator singleton as production.
+
+    If save_output_dir is given, the actual retrieval output (not just
+    timing/convergence metadata) is saved per profile via
+    benchmark_observation()'s save_output_dir passthrough -- see
+    l2_output_* columns in the results.
 
     Writes each result to out_csv incrementally (flushed after every row),
     not just once at the end -- L2 retrievals here run 100-600+s each with
@@ -547,16 +689,31 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
     whatever this particular invocation computed."""
     simulator = rod._get_simulator()
 
-    completed = _load_completed_keys(out_csv)
-    if completed:
-        rod.log.info("Resuming: %d results already in %s, matching samples will be skipped",
-                      len(completed), out_csv)
-
     csv_path = out_csv
     header_written = False
     if csv_path is not None:
         import os
-        header_written = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
+        file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
+        if file_exists:
+            with open(csv_path) as f:
+                existing_header = f.readline().strip().split(",")
+            if existing_header != _RESULT_FIELDNAMES:
+                backup_path = csv_path + ".schema_mismatch.bak"
+                rod.log.warning(
+                    "%s has a different column schema than the current script "
+                    "(existing: %s | current: %s) -- likely reused across script "
+                    "versions during development. Backing up to %s and starting "
+                    "fresh rather than corrupting further appends.",
+                    csv_path, existing_header, _RESULT_FIELDNAMES, backup_path,
+                )
+                os.rename(csv_path, backup_path)
+                file_exists = False
+        header_written = file_exists
+
+    completed = _load_completed_keys(out_csv)
+    if completed:
+        rod.log.info("Resuming: %d results already in %s, matching samples will be skipped",
+                      len(completed), out_csv)
 
     n_total = sum(len(s["h2_for_day"]) for s in samples)
     n_done = 0
@@ -568,7 +725,7 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None) -> pd.DataFra
                 n_skipped_existing += 1
                 continue
 
-            row = benchmark_observation(sample, case_label, simulator)
+            row = benchmark_observation(sample, case_label, simulator, save_output_dir=save_output_dir)
             n_done += 1
 
             if csv_path is not None:
@@ -691,7 +848,7 @@ if __name__ == "__main__":
     # Pull real observations spread across the simulation period.
     # Start small -- 3 days x 8 obs/day x n_cases is enough to sanity-check
     # before scaling up to a bigger sample.
-    samples, daytime_stats = sample_observations(n_days=3, n_obs_per_day=4)
+    samples, daytime_stats = sample_observations(n_days=2, n_obs_per_day=4)
     rod.log.info("Sampled %d observations across %d days", len(samples),
                  len({s["date_str"] for s in samples}))
     rod.log.info("Real observed daytime fraction: %.3f (%d/%d candidates)",
@@ -705,7 +862,7 @@ if __name__ == "__main__":
     inspect_sample, inspect_case = find_daytime_sample(samples)
     inspect_profile_functions(inspect_sample, inspect_case, simulator)
 
-    df = run_benchmark(samples, out_csv="l2_benchmark_results.csv")
+    df = run_benchmark(samples, out_csv="l2_benchmark_results.csv", save_output_dir="l2_outputs")
     print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",
                "l2_marginal_time_s", "l2_entry_point", "converged", "status"]])
 

@@ -862,20 +862,20 @@ if __name__ == "__main__":
     inspect_sample, inspect_case = find_daytime_sample(samples)
     inspect_profile_functions(inspect_sample, inspect_case, simulator)
 
-    df = run_benchmark(samples, out_csv="l2_benchmark_results.csv", save_output_dir="l2_outputs")
-    print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",
-               "l2_marginal_time_s", "l2_entry_point", "converged", "status"]])
+    #df = run_benchmark(samples, out_csv="l2_benchmark_results.csv", save_output_dir="l2_outputs")
+    #print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",
+    #           "l2_marginal_time_s", "l2_entry_point", "converged", "status"]])
 
-    summary = summarize(df)
-    print(summary)
+    #summary = summarize(df)
+    #print(summary)
 
-    n_cases = len(build_case_labels())
-    count_est = estimate_total_profile_count(daytime_stats["observed_daytime_fraction"], n_cases)
-    print(count_est)
+    #n_cases = len(build_case_labels())
+    #count_est = estimate_total_profile_count(daytime_stats["observed_daytime_fraction"], n_cases)
+    #print(count_est)
 
-    extrap = extrapolate_to_full_run(
-        summary,
-        total_profile_count=count_est["estimated_total_profile_count"],
-        n_parallel_workers=rod.N_WORKERS,
-    )
-    print(extrap)
+    #extrap = extrapolate_to_full_run(
+    #    summary,
+    #    total_profile_count=count_est["estimated_total_profile_count"],
+    #    n_parallel_workers=rod.N_WORKERS,
+    #)
+    #print(extrap)

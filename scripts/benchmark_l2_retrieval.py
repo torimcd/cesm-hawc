@@ -354,56 +354,61 @@ def _parse_scipy_convergence(captured_stdout: str) -> dict:
 
 def _save_l2_output(data_full: dict, out_path_base: str) -> dict:
     """Save the actual L2 retrieval output to disk, not just timing/
-    convergence metadata. Tries .to_netcdf() first since everything else
-    in this pipeline (l1b, WACCM data) is xarray-based -- confirm this is
-    right for your case via inspect_profile_functions()'s structure dump
-    before trusting it at scale. Falls back to pickling the raw object if
-    it's not netcdf-writable, so nothing is silently lost even if the
-    structure turns out to differ from what's handled here.
+    convergence metadata.
 
-    Saves both data_full['l2'] and data_full['sk2_atmosphere'] (if
-    present) as separate files, since inspect_profile_functions() showed
-    both exist as distinct products in FULL_L2_PRODUCTS.
+    Only saves data_full['l2'] -- confirmed via inspect_profile_functions()
+    to be a clean xarray Dataset (data_vars include the retrieved profiles,
+    priors, 1-sigma errors, and averaging kernels for O3 VMR, aerosol
+    extinction, aerosol median radius, plus num_iterations/cost/geometry),
+    so .to_netcdf() just works.
 
-    Returns {saved, format, paths (dict per product), error}.
+    data_full['sk2_atmosphere'] is deliberately NOT saved: it's a
+    sasktran2.atmosphere.Atmosphere object, not xarray, wrapping an
+    internal_object that's almost certainly a compiled C++/Rust extension
+    type -- pickling it is likely to fail or produce something large and
+    fragile, and it's the forward model's internal RT state rather than
+    retrieval output, so there's little scientific value in keeping it.
+
+    Returns {saved, format, paths (dict, currently just {'l2': path}), error}.
     """
     result = {"saved": False, "format": None, "paths": {}, "error": None}
-    errors = []
 
-    for product_name in ("l2", "sk2_atmosphere"):
-        obj = data_full.get(product_name)
-        if obj is None:
-            continue
+    obj = data_full.get("l2")
+    if obj is None:
+        result["error"] = "data_full['l2'] is None or missing"
+        return result
 
-        path_nc = f"{out_path_base}_{product_name}.nc"
-        try:
-            if hasattr(obj, "to_netcdf"):
-                obj.to_netcdf(path_nc)
-                result["paths"][product_name] = path_nc
-                result["saved"] = True
-                result["format"] = "netcdf"
-                continue
-        except Exception as e:
-            errors.append(f"{product_name}: to_netcdf failed: {type(e).__name__}: {e}")
+    path_nc = f"{out_path_base}_l2.nc"
+    try:
+        obj.to_netcdf(path_nc)
+        result["paths"]["l2"] = path_nc
+        result["saved"] = True
+        result["format"] = "netcdf"
+    except Exception as e:
+        result["error"] = f"l2: to_netcdf failed: {type(e).__name__}: {e}"
 
-        # fallback: pickle whatever it is
-        try:
-            import pickle
-            path_pkl = f"{out_path_base}_{product_name}.pkl"
-            with open(path_pkl, "wb") as f:
-                pickle.dump(obj, f)
-            result["paths"][product_name] = path_pkl
-            result["saved"] = True
-            if result["format"] is None:
-                result["format"] = "pickle"
-            elif result["format"] == "netcdf":
-                result["format"] = "mixed"
-        except Exception as e:
-            errors.append(f"{product_name}: pickle failed: {type(e).__name__}: {e}")
-
-    if errors:
-        result["error"] = " | ".join(errors)
     return result
+
+
+def _extract_l2_native_diagnostics(data_full: dict) -> dict:
+    """Pull num_iterations/cost directly from the l2 Dataset, as a
+    cross-check against the stdout-regex-parsed convergence info from
+    _parse_scipy_convergence(). More reliable in principle since it comes
+    from the dataset itself rather than string-matching printed output --
+    worth comparing the two once you have real data, and preferring this
+    if they disagree."""
+    l2 = data_full.get("l2")
+    if l2 is None:
+        return {"l2_num_iterations": None, "l2_final_cost": None}
+    try:
+        n_iter = int(l2["num_iterations"].values) if "num_iterations" in l2 else None
+    except Exception:
+        n_iter = None
+    try:
+        cost = float(l2["cost"].values) if "cost" in l2 else None
+    except Exception:
+        cost = None
+    return {"l2_num_iterations": n_iter, "l2_final_cost": cost}
 
 
 def _actual_sza(data: dict) -> float | None:
@@ -551,6 +556,8 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
         "converged": None,
         "termination_reason": None,
         "n_function_evaluations": None,
+        "l2_num_iterations": None,
+        "l2_final_cost": None,
         "l2_output_saved": False,
         "l2_output_format": None,
         "l2_output_paths": None,
@@ -598,6 +605,10 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
         result["termination_reason"] = diag["termination_reason"]
         result["n_function_evaluations"] = diag["n_function_evaluations"]
 
+        native_diag = _extract_l2_native_diagnostics(data_full)
+        result["l2_num_iterations"] = native_diag["l2_num_iterations"]
+        result["l2_final_cost"] = native_diag["l2_final_cost"]
+
         if save_output_dir is not None:
             # Save for BOTH converged and non-converged cases -- a failed
             # retrieval's output is still scientifically informative (what
@@ -641,7 +652,8 @@ _RESULT_FIELDNAMES = [
     "case_label", "date_str", "orbit_day", "lat", "lon", "time",
     "actual_sza_deg", "total_time_s", "l2_marginal_time_s", "l2_entry_point",
     "non_retrieval_time_s", "converged", "termination_reason",
-    "n_function_evaluations", "l2_output_saved", "l2_output_format",
+    "n_function_evaluations", "l2_num_iterations", "l2_final_cost",
+    "l2_output_saved", "l2_output_format",
     "l2_output_paths", "l2_output_save_error", "status", "error", "error_traceback",
 ]
 
@@ -862,20 +874,20 @@ if __name__ == "__main__":
     inspect_sample, inspect_case = find_daytime_sample(samples)
     inspect_profile_functions(inspect_sample, inspect_case, simulator)
 
-    #df = run_benchmark(samples, out_csv="l2_benchmark_results.csv", save_output_dir="l2_outputs")
-    #print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",
-    #           "l2_marginal_time_s", "l2_entry_point", "converged", "status"]])
+    df = run_benchmark(samples, out_csv="l2_benchmark_results.csv", save_output_dir="l2_outputs")
+    print(df[["case_label", "date_str", "actual_sza_deg", "total_time_s",
+               "l2_marginal_time_s", "l2_entry_point", "converged", "status"]])
 
-    #summary = summarize(df)
-    #print(summary)
+    summary = summarize(df)
+    print(summary)
 
-    #n_cases = len(build_case_labels())
-    #count_est = estimate_total_profile_count(daytime_stats["observed_daytime_fraction"], n_cases)
-    #print(count_est)
+    n_cases = len(build_case_labels())
+    count_est = estimate_total_profile_count(daytime_stats["observed_daytime_fraction"], n_cases)
+    print(count_est)
 
-    #extrap = extrapolate_to_full_run(
-    #    summary,
-    #    total_profile_count=count_est["estimated_total_profile_count"],
-    #    n_parallel_workers=rod.N_WORKERS,
-    #)
-    #print(extrap)
+    extrap = extrapolate_to_full_run(
+        summary,
+        total_profile_count=count_est["estimated_total_profile_count"],
+        n_parallel_workers=rod.N_WORKERS,
+    )
+    print(extrap)

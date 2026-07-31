@@ -144,11 +144,18 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
     skipped anyway. Only confirmed-daytime observations are returned,
     evenly spaced across the day's daytime arc.
 
-    Returns a list of dicts:
-        {date_str, orbit_day, obs, h2_for_day}
-    where obs is a single observation dict from rod.extract_observations()
-    (real lat/lon/time/observer geometry) and h2_for_day maps case label
-    -> h2 file path for that date, one entry per sampled observation.
+    Returns (samples, daytime_stats):
+      samples: list of dicts {date_str, orbit_day, obs, h2_for_day}, where
+        obs is a single observation dict from rod.extract_observations()
+        (real lat/lon/time/observer geometry) and h2_for_day maps case
+        label -> h2 file path for that date, one entry per sampled
+        observation.
+      daytime_stats: {n_daytime_candidates, n_total_candidates,
+        observed_daytime_fraction, per_day} -- the REAL daytime fraction
+        measured before the pre-filter discards night-side candidates.
+        Use this (not anything derived from the returned samples/benchmark
+        results, which are ALL daytime by construction) for extrapolating
+        to the full simulation period via estimate_total_profile_count().
     """
     orbit_files = rod.load_orbit_files()
     orbit_day_idx = rod.build_orbit_day_index(orbit_files)
@@ -178,6 +185,7 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
     simulator = rod._get_simulator()
 
     samples = []
+    daytime_stats = {"n_daytime_candidates": 0, "n_total_candidates": 0, "per_day": []}
     for i in sample_idx:
         date_str = bg_dates[i]
         orbit_day = i % n_orbit_days
@@ -217,6 +225,11 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
                 raise
 
         rod.log.info("%s: %d/%d observations are daytime", date_str, len(daytime_obs), len(day_obs))
+        daytime_stats["n_daytime_candidates"] += len(daytime_obs)
+        daytime_stats["n_total_candidates"] += len(day_obs)
+        daytime_stats["per_day"].append({
+            "date_str": date_str, "n_daytime": len(daytime_obs), "n_total": len(day_obs),
+        })
         if not daytime_obs:
             continue
 
@@ -233,7 +246,11 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
                 "h2_for_day": h2_for_day,
             })
 
-    return samples
+    daytime_stats["observed_daytime_fraction"] = (
+        daytime_stats["n_daytime_candidates"] / daytime_stats["n_total_candidates"]
+        if daytime_stats["n_total_candidates"] > 0 else None
+    )
+    return samples, daytime_stats
 
 
 def _build_sim_input(obs: dict) -> dict:
@@ -564,15 +581,22 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-def estimate_total_profile_count(df: pd.DataFrame, n_cases: int) -> dict:
+def estimate_total_profile_count(daytime_fraction: float, n_cases: int) -> dict:
     """
     Rough estimate of total ALI observations across the full simulation
-    period, using the night-skip rate observed in this benchmark sample
-    and the actual number of simulation days from run_orbit_daily's h2
-    file index -- rather than assuming a fixed daytime fraction.
-    """
-    daytime_frac = (df["status"] == "ok").sum() / max(len(df), 1)
+    period, using the actual number of simulation days from run_orbit_
+    daily's h2 file index and a REAL measured daytime fraction.
 
+    daytime_fraction must come from sample_observations()'s returned
+    daytime_stats["observed_daytime_fraction"], not from the benchmark
+    results df -- since sample_observations() now pre-filters to only
+    return confirmed-daytime observations, every row in the benchmark
+    results has status="ok" by construction, making
+    (df["status"]=="ok").sum()/len(df) trivially 1.0 and silently
+    doubling this estimate (confirmed against real data: two sampled
+    days showed ~50% daytime, not the 100% the old df-derived fraction
+    implied).
+    """
     case_labels = build_case_labels()
     bg_dates = sorted(rod.build_h2_index(rod.BACKGROUND_CASE).keys())
     if rod.RUN_START_DATE or rod.RUN_END_DATE:
@@ -584,11 +608,11 @@ def estimate_total_profile_count(df: pd.DataFrame, n_cases: int) -> dict:
     n_days = len(bg_dates)
     obs_per_day_theoretical = 86400 // rod.OBS_CADENCE_S
 
-    total_profiles = int(n_days * obs_per_day_theoretical * daytime_frac * n_cases)
+    total_profiles = int(n_days * obs_per_day_theoretical * daytime_fraction * n_cases)
     return {
         "n_simulation_days": n_days,
         "obs_per_day_theoretical": obs_per_day_theoretical,
-        "observed_daytime_fraction": daytime_frac,
+        "observed_daytime_fraction": daytime_fraction,
         "n_cases": n_cases,
         "estimated_total_profile_count": total_profiles,
     }
@@ -628,9 +652,12 @@ if __name__ == "__main__":
     # Pull real observations spread across the simulation period.
     # Start small -- 3 days x 8 obs/day x n_cases is enough to sanity-check
     # before scaling up to a bigger sample.
-    samples = sample_observations(n_days=2, n_obs_per_day=3)
-    rod.log.info("Sampled %d observations across %d days",
-                 len(samples), len({s["date_str"] for s in samples}))
+    samples, daytime_stats = sample_observations(n_days=3, n_obs_per_day=4)
+    rod.log.info("Sampled %d observations across %d days", len(samples),
+                 len({s["date_str"] for s in samples}))
+    rod.log.info("Real observed daytime fraction: %.3f (%d/%d candidates)",
+                 daytime_stats["observed_daytime_fraction"],
+                 daytime_stats["n_daytime_candidates"], daytime_stats["n_total_candidates"])
 
     simulator = rod._get_simulator()
 
@@ -647,7 +674,7 @@ if __name__ == "__main__":
     print(summary)
 
     n_cases = len(build_case_labels())
-    count_est = estimate_total_profile_count(df, n_cases)
+    count_est = estimate_total_profile_count(daytime_stats["observed_daytime_fraction"], n_cases)
     print(count_est)
 
     extrap = extrapolate_to_full_run(

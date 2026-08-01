@@ -83,6 +83,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Optional
 
@@ -1194,12 +1195,56 @@ def main() -> None:
     else:
         workers = min(N_WORKERS, len(jobs))
         log.info("Dispatching to %d worker processes...", workers)
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(process_day, *job): job[0] for job in jobs}
-            for fut in as_completed(futures):
-                result = fut.result()
-                results.append(result)
-                log.info("Completed: %s", result)
+
+        # max_tasks_per_child=1: each worker process is discarded and
+        # replaced with a fresh one after finishing ONE day, rather than
+        # persisting across every day dispatched to it for the life of the
+        # job. This directly targets a real failure: a 90-worker RUN_L2 job
+        # OOM-killed ~5 hours in despite mem-per-cpu being deliberately kept
+        # under the node's total memory, most likely from memory that isn't
+        # released between days within a long-lived worker (WACCMAtmosphere
+        # opens h2 NetCDF files via xarray but is never explicitly closed;
+        # _get_simulator()'s per-worker IdealALISimulator singleton was also
+        # designed to persist across days). Restarting workers per-day caps
+        # any such growth instead of letting it accumulate for hours.
+        #
+        # This does cost re-constructing IdealALISimulator() once per day
+        # instead of once per worker-lifetime, but the calibration-database
+        # patch earlier made that idempotent against the pre-warmed NFS
+        # cache, so the actual overhead should be small relative to a
+        # 100-600s/profile L2 day. If jobs still OOM even with this in
+        # place, that points to a single day's own memory footprint being
+        # the problem (not cross-day accumulation) and mem-per-cpu itself
+        # needs to go up, not max_tasks_per_child down further.
+        try:
+            with ProcessPoolExecutor(max_workers=workers, max_tasks_per_child=1) as pool:
+                futures = {pool.submit(process_day, *job): job[0] for job in jobs}
+                for fut in as_completed(futures):
+                    result = fut.result()
+                    results.append(result)
+                    log.info("Completed: %s", result)
+        except BrokenProcessPool:
+            # A worker was killed abruptly (e.g. OOM by the OS/cgroup, not a
+            # Python exception) -- this poisons the whole pool, so every
+            # OTHER worker's in-progress day is abandoned too, even ones
+            # that were fine. Nothing already written to disk is lost
+            # (day-level curtain.nc/l2_retrieval.nc for completed days, and
+            # profile-level l2_diagnostics.csv rows / l2_profiles/*.nc for
+            # partially-done days) -- day-level and profile-level resume in
+            # main()/process_day() mean simply re-submitting this exact job
+            # picks up from here rather than redoing finished work. Check
+            # `sacct -j $SLURM_JOB_ID --format=JobID,MaxRSS,NNodes,State`
+            # for the actual peak memory reached before deciding whether to
+            # also adjust --mem-per-cpu/--cpus-per-task before resubmitting.
+            log.error(
+                "Process pool broke, likely from a worker being killed "
+                "abruptly (check for an oom_kill event in the SLURM .err "
+                "log). Days already completed and profiles already saved "
+                "are safe on disk. Re-submit this exact job -- day-level "
+                "and profile-level resume will skip everything already "
+                "done and continue from where this run stopped."
+            )
+            raise
 
     # final report
     ok   = [r for r in results if r.startswith("OK")]

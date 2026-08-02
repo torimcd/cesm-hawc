@@ -232,7 +232,11 @@ class WACCMAtmosphere:
         Parameters
         ----------
         lat        : float  target latitude [degrees], nearest-neighbour
-        lon        : float  target longitude [degrees], nearest-neighbour
+        lon        : float  target longitude [degrees], nearest-neighbour.
+                     Accepts either -180/180 or 0/360 convention -- always
+                     normalized to 0/360 internally before selection, since
+                     CESM/CAM history files store lon on a 0/360 grid (e.g.
+                     [0.0, 1.25, ..., 358.75]). See CONFIRMED BUG note below.
         time_index : int    time slice index (0-based)
 
         Returns
@@ -254,7 +258,26 @@ class WACCMAtmosphere:
         sulfate_a3_N_cm3    [cm⁻³]   coarse mode number  ← ALI primary signal
         sulfate_a3_r_um     [μm]     coarse mode median radius
         sulfate_a3_sigma    float    1.2 (scalar, WACCM-specific)
+
+        CONFIRMED BUG (fixed here): this file's `lon` coordinate spans
+        [0.0, 358.75] (confirmed directly against real h2 output), but
+        callers throughout this pipeline (run_orbit_daily.py's
+        extract_observations(), which reads longitude straight from
+        orbit_*.nc with no conversion) pass longitude in -180/180
+        convention. `.sel(lon=..., method="nearest")` against a 0-360
+        coordinate array is NOT circular -- for any negative target down
+        to about -179, distance-to-0.0 is smaller than distance-to-358.75,
+        so EVERY negative longitude silently snapped to the same lon=0.0
+        column regardless of its actual value. Confirmed directly: seven
+        different requested longitudes spanning -156.7 to -16.1 all
+        returned bit-identical profiles for every single field (pressure,
+        temperature, O3, SO2, both sulfate modes). This affected every
+        truth extinction value computed anywhere in this pipeline for any
+        orbit observation with negative longitude -- roughly half of all
+        global samples -- silently substituting the real column with
+        whatever's at lon=0.0 instead.
         """
+        lon = lon % 360.0  # normalize to [0, 360) -- see CONFIRMED BUG above
         col  = self.ds.isel(time=time_index).sel(lat=lat, lon=lon, method="nearest")
         p0   = self._p0()
         ps   = float(col["PS"].values)

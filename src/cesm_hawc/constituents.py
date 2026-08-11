@@ -61,10 +61,7 @@ import numpy as np
 try:
     import sasktran2 as sk
 except ImportError as e:
-    raise ImportError(
-        "sasktran2 must be installed. "
-        "See environment.yml for the correct install method."
-    ) from e
+    raise ImportError("sasktran2 must be installed: pip install cesm-hawc[sim]") from e
 
 
 # ── Mode-specific Mie databases ─────────────────────────────────────────────

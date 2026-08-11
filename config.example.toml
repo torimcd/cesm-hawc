@@ -107,6 +107,3 @@ wavelengths_nm   = [470.0, 745.0, 1020.0]
 alt_grid_start_m = 0.0
 alt_grid_stop_m  = 65000.0   # inclusive upper bound [m]
 alt_grid_step_m  = 1000.0
-# Note: there is no noise_straylight_fraction key. The ALINoiseModel's
-# straylight fraction is always hardcoded to 0.0 (see cesm_hawc.noise) and
-# is not user-configurable.

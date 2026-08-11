@@ -48,4 +48,4 @@ def test_require_sim_deps_exits_with_install_instructions(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(SystemExit) as exc_info:
         _require_sim_deps()
-    assert "conda-forge" in str(exc_info.value)
+    assert "cesm-hawc[sim]" in str(exc_info.value)

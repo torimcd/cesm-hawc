@@ -38,21 +38,12 @@ log = logging.getLogger("cesm_hawc")
 def _require_sim_deps() -> None:
     try:
         import hawcsimulator  # noqa: F401
-    except ImportError:
-        sys.exit(
-            "The 'run' command requires hawcsimulator and sasktran2.\n"
-            "sasktran2 is conda-forge only (not pip-installable):\n"
-            "    micromamba install -c conda-forge sasktran2\n"
-            "then:\n"
-            "    pip install cesm-hawc[sim]\n"
-        )
-    try:
         import sasktran2  # noqa: F401
     except ImportError:
         sys.exit(
-            "The 'run' command requires sasktran2, which is conda-forge "
-            "only (not pip-installable):\n"
-            "    micromamba install -c conda-forge sasktran2\n"
+            "The 'run' command requires the [sim] extra:\n"
+            "    pip install cesm-hawc[sim]\n"
+            "(requires Python >=3.11)\n"
         )
 
 

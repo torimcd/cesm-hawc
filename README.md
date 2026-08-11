@@ -1,6 +1,6 @@
 # cesm-hawc
 
-Feed CESM2/WACCM stratospheric aerosol injection (SAI) output into the
+Feed CESM2/WACCM atmosphere model output into the
 [HAWC ALI simulator](https://github.com/usask-arg/hawc-simulator) to
 simulate what the HAWCSat Aerosol Limb Imager would observe.
 
@@ -16,32 +16,17 @@ package:
 
 It has two tiers:
 
-- **Base** (`pip install cesm-hawc`) — WACCM column extraction and saving
-  simulator/L2 inputs at monthly or daily scale. Only needs numpy/xarray/
-  scipy/pandas.
-- **`[sim]` extra** (`pip install cesm-hawc[sim]`) — the full forward model
-  and L2 retrieval, via `hawcsimulator`. This also requires `sasktran2`,
-  which is **conda-forge only** (a compiled extension, not published to
-  PyPI) — see [Install](#install) below.
+- **Base** (`pip install cesm-hawc`, Python >=3.10) — WACCM column
+  extraction and saving simulator/L2 inputs at monthly or daily scale.
+  Only needs numpy/xarray/scipy/pandas.
+- **`[sim]` extra** (`pip install cesm-hawc[sim]`, Python >=3.11) — the
+  full forward model and L2 retrieval, via `hawcsimulator` + `sasktran2`.
 
 ## Install
 
-**Base tier (column extraction / save-inputs only, pure pip):**
-
 ```bash
-pip install cesm-hawc
-```
-
-**Full simulator tier (`[sim]` extra) — two steps, since `sasktran2` must
-come from conda-forge first:**
-
-```bash
-# 1) sasktran2 from conda-forge (not pip-installable)
-micromamba create -n hawc_env -c conda-forge python=3.11 sasktran2 xarray scipy pandas numpy -y
-micromamba activate hawc_env
-
-# 2) cesm-hawc + hawcsimulator
-pip install cesm-hawc[sim]
+pip install cesm-hawc          # base tier
+pip install cesm-hawc[sim]     # + full simulator (requires Python >=3.11)
 ```
 
 **From source (development):**
@@ -135,14 +120,11 @@ file attrs. Check a file's `includes_constituents` attr to see which shape
 it has (`--profiles-only` skips this even when `sasktran2` is available,
 for minimal-footprint massive batch runs).
 
-`sasktran2`'s constituent objects themselves can't be serialized to a file
-— they wrap live Mie-database state built from real scattering
-calculations, not just plain numbers — so this is the closest a file format
+`sasktran2`'s constituent objects themselves can't be serialized to a file since they wrap live Mie-database state built from real scattering
+calculations, so this is the closest a file format
 can get: everything **except** the Mie database build itself is
-precomputed and saved. A collaborator who already has their own
-`sasktran2`/`hawcsimulator` setup can go straight from a saved file to a
-simulator run using only *native* `sasktran2` calls — no `cesm_hawc`
-import required at all:
+precomputed and saved. You can go straight from a saved file to a
+simulator run using only *native* `sasktran2` calls with this output, no `cesm_hawc` import required at all:
 
 ```python
 import xarray as xr
@@ -187,12 +169,6 @@ sim_input = {
 data = IdealALISimulator().run(["l2", "front_end_radiance", "l1b"], sim_input)
 ```
 
-`sasktran2` itself is unavoidable here (it's the RT engine underneath
-`hawcsimulator`, and the constituent objects only exist as live `sasktran2`
-state) — but that's already a given for anyone running the full simulator.
-What's *not* required is `cesm_hawc.constituents.build_waccm_constituents()`
-or any other part of this package: the WACCM-specific N→extinction
-translation already happened when the file was saved.
 
 ## Required WACCM output variables
 

@@ -21,11 +21,8 @@ cesm-hawc = "cesm_hawc.cli:main"
 
 [project.optional-dependencies]
 # End-to-end simulation (the `cesm-hawc run` CLI command / cesm_hawc.simulation
-# / cesm_hawc.constituents). sasktran2 is NOT listed here: it is conda-forge
-# only (a compiled extension, not published to PyPI) and must be installed
-# separately, e.g. `micromamba install -c conda-forge sasktran2`, before
-# `pip install cesm-hawc[sim]`. See the README's Install section.
-sim = ["hawcsimulator"]
+# / cesm_hawc.constituents). hawcsimulator requires Python >=3.11.
+sim = ["hawcsimulator", "sasktran2"]
 dev = ["pytest", "jupyter", "matplotlib", "cartopy"]
 
 [tool.setuptools.packages.find]

@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - sasktran2        # installed from conda-forge — do NOT pip install, requires compilation
+  - sasktran2
   - xarray
   - scipy
   - numpy

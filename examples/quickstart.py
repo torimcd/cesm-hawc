@@ -25,8 +25,12 @@ Writes to --out-dir:
     profiles_<date>.nc            raw WACCM column (WACCMAtmosphere.save_column_profiles)
     constituents_input_<date>.nc  simulator-ready input (cesm_hawc.save_inputs)
     forward_<date>.nc             forward model output (front_end_radiance/l1b)
-    l2_retrieval_<date>.nc        full L2 retrieval output
-    comparison_<date>.txt         retrieved vs. truth extinction + convergence
+    l2_retrieval_<date>.nc        full L2 retrieval output (cesm-hawc's own code path)
+    l2_retrieval_direct_<date>.nc L2 retrieval rebuilt from the saved constituents-input
+                                   file using only native sasktran2 calls (no
+                                   cesm_hawc.constituents), same geometry -- a round-trip
+                                   check that the saved file reproduces the same result
+    comparison_<date>.txt         truth vs. both retrievals + convergence
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import cesm_hawc
 from cesm_hawc.calibration import warm_calibration_database
@@ -124,10 +129,57 @@ def find_daytime_observation(waccm, simulator, orbit_path, sim_date, obs_index):
     )
 
 
-def compare_retrieved_vs_truth(l2, true_ext) -> list[str]:
+def run_simulator_direct(constituents_path: str, sim_geometry: dict):
+    """
+    Re-read the just-saved constituents-input file and rebuild the
+    simulator's aerosol/gas constituents using only native sasktran2 calls. Then run
+    the simulator with the exact same ``sim_geometry`` the cesm-hawc-native
+    run used. Mirrors the README's "Consuming saved inputs externally"
+    example.
+    
+    """
+    import sasktran2 as sk
+    from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+
+    ds = xr.open_dataset(constituents_path)
+    assert ds.attrs["includes_constituents"], f"{constituents_path} was saved with --profiles-only"
+    alt_m = ds["altitude_m"].values
+
+    def mode_constituent(mode: str):
+        mode_width = ds.attrs[f"mode_width_{'accum' if mode == 'aerosol_accum' else 'coarse'}"]
+        mode_db = sk.database.MieDatabase(
+            sk.mie.distribution.LogNormalDistribution().freeze(mode_width=mode_width),
+            sk.mie.refractive.H2SO4(),  # ds.attrs["mie_refractive_index"]
+            ds.attrs["mie_wavelength_grid_nm"],
+            median_radius=ds.attrs["mie_median_radius_grid_nm"],
+        )
+        return sk.constituent.ExtinctionScatterer(
+            mode_db, altitudes_m=alt_m,
+            extinction_per_m=ds[f"{mode}_reference_extinction_per_m"].values,
+            extinction_wavelength_nm=ds.attrs["extinction_reference_wavelength_nm"],
+            median_radius=ds[f"{mode}_median_radius_nm"].values,
+        )
+
+    constituents = {
+        "o3": sk.constituent.VMRAltitudeAbsorber(sk.optical.O3DBM(), altitudes_m=alt_m, vmr=ds["vmr_o3"].values),
+        "no2": sk.constituent.VMRAltitudeAbsorber(sk.optical.NO2Vandaele(), altitudes_m=alt_m, vmr=ds["vmr_no2"].values),
+        "aerosol_accum": mode_constituent("aerosol_accum"),
+        "aerosol_coarse": mode_constituent("aerosol_coarse"),
+    }
+
+    data = IdealALISimulator().run(
+        ["l2", "front_end_radiance", "l1b"], {**sim_geometry, "constituents": constituents}
+    )
+    return data["l2"]
+
+
+def compare_retrieved_vs_truth(l2, true_ext, l2_direct=None) -> list[str]:
     """Interpolate the WACCM-derived truth extinction (summed across both
     MAM4 modes at the 745 nm reference wavelength) onto L2's own altitude
-    grid and diff it against the retrieved extinction."""
+    grid and diff it against the retrieved extinction. If l2_direct is
+    given (the independently-reconstructed retrieval from
+    run_simulator_direct()), it's added as a third column so you
+    can see both retrievals against truth and against each other."""
     ref_idx = int(np.argmin(np.abs(WAVELENGTHS_NM - REFERENCE_WAVELENGTH_NM)))
     truth_ext = (true_ext["aerosol_accum_extinction_per_m"][ref_idx]
                  + true_ext["aerosol_coarse_extinction_per_m"][ref_idx])  # [atm altitude]
@@ -143,17 +195,40 @@ def compare_retrieved_vs_truth(l2, true_ext) -> list[str]:
     lines = [
         "Retrieved vs. truth extinction (745 nm reference)",
         "---------------------------------------------------",
-        f"  Peak truth extinction:     {truth_ext[peak_truth_idx]:.4e} m^-1 "
+        f"  Peak truth extinction:                 {truth_ext[peak_truth_idx]:.4e} m^-1 "
         f"at {ALT_GRID_M[peak_truth_idx] / 1e3:.1f} km",
-        f"  Peak retrieved extinction: {retrieved_ext.values[peak_retrieved_idx]:.4e} m^-1 "
+        f"  Peak retrieved extinction (cesm-hawc): {retrieved_ext.values[peak_retrieved_idx]:.4e} m^-1 "
         f"at {l2_alt_m[peak_retrieved_idx] / 1e3:.1f} km",
-        f"  Mean |residual| (retrieved - truth): {np.mean(np.abs(residual)):.4e} m^-1",
-        f"  Max  |residual| (retrieved - truth): {np.max(np.abs(residual)):.4e} m^-1",
-        "",
-        "  altitude_km  retrieved_per_m  truth_per_m  residual_per_m",
+        f"  Mean |residual| (cesm-hawc - truth):   {np.mean(np.abs(residual)):.4e} m^-1",
+        f"  Max  |residual| (cesm-hawc - truth):   {np.max(np.abs(residual)):.4e} m^-1",
     ]
-    for alt, ret, truth, res in zip(l2_alt_m, retrieved_ext.values, truth_on_l2_grid, residual):
-        lines.append(f"  {alt / 1e3:10.1f}  {ret:14.4e}  {truth:11.4e}  {res:14.4e}")
+
+    direct_on_l2_grid = None
+    if l2_direct is not None:
+        direct_ext = l2_direct["stratospheric_aerosol_extinction_per_m"]
+        direct_on_l2_grid = np.interp(l2_alt_m, direct_ext.altitude.values, direct_ext.values)
+        direct_residual = direct_on_l2_grid - truth_on_l2_grid
+        cesm_hawc_vs_direct = retrieved_ext.values - direct_on_l2_grid
+        peak_direct_idx = int(np.argmax(direct_on_l2_grid))
+        lines += [
+            f"  Peak retrieved extinction (direct):    {direct_on_l2_grid[peak_direct_idx]:.4e} m^-1 "
+            f"at {l2_alt_m[peak_direct_idx] / 1e3:.1f} km",
+            f"  Mean |residual| (direct - truth):      {np.mean(np.abs(direct_residual)):.4e} m^-1",
+            f"  Mean |cesm-hawc - direct|:              {np.mean(np.abs(cesm_hawc_vs_direct)):.4e} m^-1 "
+            f"(should be ~0 if the saved file round-trips correctly)",
+        ]
+
+    lines.append("")
+    if direct_on_l2_grid is not None:
+        lines.append("  altitude_km  truth_per_m  cesm_hawc_per_m  direct_per_m  "
+                      "cesm_hawc_residual  direct_residual")
+        for alt, truth, ret, direct in zip(l2_alt_m, truth_on_l2_grid, retrieved_ext.values, direct_on_l2_grid):
+            lines.append(f"  {alt / 1e3:10.1f}  {truth:11.4e}  {ret:15.4e}  {direct:12.4e}  "
+                         f"{ret - truth:18.4e}  {direct - truth:15.4e}")
+    else:
+        lines.append("  altitude_km  retrieved_per_m  truth_per_m  residual_per_m")
+        for alt, ret, truth, res in zip(l2_alt_m, retrieved_ext.values, truth_on_l2_grid, residual):
+            lines.append(f"  {alt / 1e3:10.1f}  {ret:14.4e}  {truth:11.4e}  {res:14.4e}")
     return lines
 
 
@@ -190,7 +265,7 @@ def main(h2_path: str, orbit_path: str, out_dir: str,
     #    Mie build params on top of the same column)
     constituents_path = os.path.join(out_dir, f"constituents_input_{date_str}.nc")
     save_column_inputs(waccm, obs["lat"], obs["lon"], constituents_path, 0,
-                        ALT_GRID_M, WAVELENGTHS_NM)
+                        ALT_GRID_M, WAVELENGTHS_NM, obs_time=obs["time"])
 
     # 3. Forward model output (front_end_radiance/l1b), with truth
     #    extinction attached on both the native and instrument grids
@@ -214,20 +289,42 @@ def main(h2_path: str, orbit_path: str, out_dir: str,
     print(f"  num_iterations (native): {native_diag['l2_num_iterations']}  "
           f"final cost: {native_diag['l2_final_cost']}")
 
-    # 5. Compare retrieved vs. truth
+    # 4.5. Independent retrieval: rebuild constituents from the saved file
+    #      using only native sasktran2 calls (no cesm_hawc.constituents),
+    #      re-run with the SAME geometry as step 4 -- a round-trip check
+    #      that the saved file reproduces the same simulator inputs.
+    print("\nRunning independently of cesm_hawc (native sasktran2, from the saved file) ...")
+    sim_geometry = {
+        "tangent_latitude": obs["lat"],
+        "tangent_longitude": obs["lon"],
+        "observer_latitude": obs["observer_lat"],
+        "observer_longitude": obs["observer_lon"],
+        "observer_altitude": obs["observer_alt"],
+        "altitude_grid": ALT_GRID_M,
+        "polarization_states": ["I", "dolp"],
+        "sample_wavelengths": WAVELENGTHS_NM,
+        "time": obs["time"],
+    }
+    l2_direct = run_simulator_direct(constituents_path, sim_geometry)
+    l2_direct_path = os.path.join(out_dir, f"l2_retrieval_direct_{date_str}.nc")
+    l2_direct_ds = l2_direct.assign_coords(lat=obs["lat"], lon=obs["lon"], time=str(obs["time"]))
+    l2_direct_ds.to_netcdf(l2_direct_path)
+    print(f"Saved independent L2 retrieval -> {l2_direct_path}")
+
+    # 5. Compare both retrievals vs. truth (and vs. each other)
     lines = [
         f"Observation: time={obs['time']}, lat={obs['lat']:.2f}, lon={obs['lon']:.2f}",
-        f"Convergence: {diag['converged']} ({diag['termination_reason']}, "
+        f"Convergence (cesm-hawc): {diag['converged']} ({diag['termination_reason']}, "
         f"{diag['n_function_evaluations']} function evaluations)",
-        f"L2 native diagnostics: num_iterations={native_diag['l2_num_iterations']}, "
+        f"L2 native diagnostics (cesm-hawc): num_iterations={native_diag['l2_num_iterations']}, "
         f"cost={native_diag['l2_final_cost']}",
         "",
     ]
-    lines += compare_retrieved_vs_truth(l2, true_ext)
+    lines += compare_retrieved_vs_truth(l2, true_ext, l2_direct=l2_direct)
     comparison_path = write_text_summary(lines, out_dir, f"comparison_{date_str}.txt")
 
     print(f"\nDone. Outputs in {out_dir}:")
-    for p in (profiles_path, constituents_path, forward_path, l2_path, comparison_path):
+    for p in (profiles_path, constituents_path, forward_path, l2_path, l2_direct_path, comparison_path):
         print(f"  {p}")
 
 

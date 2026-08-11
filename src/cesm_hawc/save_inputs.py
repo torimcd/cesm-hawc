@@ -22,7 +22,8 @@ import xarray as xr
 
 def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
                         time_index: int, alt_m: np.ndarray,
-                        wavelengths_nm=None, profiles_only: bool = False) -> None:
+                        wavelengths_nm=None, profiles_only: bool = False,
+                        obs_time=None) -> None:
     """
     Extract one WACCM column and save it as a simulator-ready input file.
 
@@ -45,6 +46,12 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         If True, skip the constituents computation even when sasktran2 is
         available (e.g. for minimal-footprint massive batch runs).
         Default False.
+    obs_time : optional
+        Real observation timestamp (e.g. a ``pd.Timestamp``), if known --
+        saved as the ``time`` attr so a later simulator run from this file
+        can match the original observation's time instead of guessing.
+        Not saved if omitted (e.g. `single`/`batch` modes without a real
+        per-observation time).
 
     Notes
     -----
@@ -86,6 +93,8 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         "sigma_a3": profiles.get("sulfate_a3_sigma", 1.2),
         "description": "WACCM column profile + simulator constituents input from cesm-hawc",
     }
+    if obs_time is not None:
+        attrs["time"] = str(obs_time)
 
     if profiles_only:
         _constituents_available = False

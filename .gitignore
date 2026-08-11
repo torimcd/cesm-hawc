@@ -214,3 +214,6 @@ __marimo__/
 
 # Machine-specific config (paths, HPC settings) — copy config.example.toml → config.toml
 config.toml
+
+# Output from examples/quickstart.py
+quickstart_output/

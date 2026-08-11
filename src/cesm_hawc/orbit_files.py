@@ -180,10 +180,15 @@ def l1b_image_to_dataset(l1b, wavelengths_nm, true_extinction: dict | None = Non
 
     If ``true_extinction`` is given (the second dict returned by
     ``build_waccm_constituents(..., return_extinction=True)``), its
-    per-mode extinction fields are attached both on their native
-    ``atm_altitude_m`` grid (``alt_grid_m``, exact) and interpolated onto
-    the instrument's own ``altitude_m`` grid for direct point-by-point
-    comparison against radiance/dolp.
+    per-mode multi-wavelength ``{name}_extinction_per_m`` truth-extinction
+    fields (shape [wavelength, altitude]) are attached both on their
+    native ``atm_altitude_m`` grid (``alt_grid_m``, exact) and interpolated
+    onto the instrument's own ``altitude_m`` grid for direct point-by-point
+    comparison against radiance/dolp. The dict's other, per-altitude-only
+    entries (``{name}_reference_extinction_per_m``, ``{name}_median_radius_nm``,
+    ``extinction_wavelength_nm``) aren't wavelength-resolved and are skipped
+    here -- they're for reconstructing constituents (see
+    ``cesm_hawc.save_inputs``), not for this dataset.
     """
     I_ds = l1b.spectra["I"].ds
     dolp_ds = l1b.spectra["dolp"].ds
@@ -208,7 +213,7 @@ def l1b_image_to_dataset(l1b, wavelengths_nm, true_extinction: dict | None = Non
     if true_extinction and alt_grid_m is not None:
         instrument_alt = ds["altitude_m"].values
         for ext_key, ext_vals in true_extinction.items():
-            if ext_key == "extinction_wavelength_nm":
+            if np.asarray(ext_vals).ndim != 2:
                 continue
             ds[f"{ext_key}_atm"] = (("wavelength", "atm_altitude_m"), ext_vals)
             interp_vals = np.array([

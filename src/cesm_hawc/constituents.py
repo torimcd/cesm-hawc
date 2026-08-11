@@ -13,7 +13,7 @@ The IdealALISimulator uses a Hamilton DAG. The atmosphere step
 
 and then merges whatever is in the ``constituents`` dict on top. This module
 provides ``build_waccm_constituents()`` which returns a dict containing WACCM
-O3, NO2, and bimodal MAM4 sulfate aerosol -- enough to represent the SAI
+O3, NO2, and bimodal MAM4 sulfate aerosol -- enough to represent the
 atmospheric state.
 
 Usage
@@ -106,10 +106,7 @@ def _get_mode_db(mode_width: float):
     Applies the same single-scattering-albedo clamp
     (ssa >= 1 -> 0.99999, then xs_scattering recomputed to match) that
     aliprocessing.l2.optical.aerosol_median_radius_db() applies to the
-    shared database -- almost certainly a numerical-stability guard
-    against SSA hitting exactly 1.0 somewhere in the RT solver. Our
-    mode-matched databases need the same guard, since we've replaced
-    the shared database entirely rather than patching around it.
+    shared database.
     """
     if mode_width not in _mode_dbs:
         refrac = sk.mie.refractive.H2SO4()
@@ -126,6 +123,19 @@ def _get_mode_db(mode_width: float):
 
         _mode_dbs[mode_width] = db
     return _mode_dbs[mode_width]
+
+
+def get_mode_mie_database(mode_width: float):
+    """
+    Public accessor for the mode-width-matched Mie database (see
+    ``_get_mode_db``), for callers reconstructing an
+    ``sk.constituent.ExtinctionScatterer`` themselves from a saved column's
+    ``{name}_reference_extinction_per_m``/``{name}_median_radius_nm`` fields
+    (see ``cesm_hawc.save_inputs``) rather than calling
+    ``build_waccm_constituents()``. ``mode_width`` is 1.8 for the
+    accumulation mode, 1.2 for the coarse mode (see ``_MODE_WIDTHS``).
+    """
+    return _get_mode_db(mode_width)
 
 
 def warm_mode_databases() -> None:
@@ -213,10 +223,25 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         ``o3``, ``no2``, ``aerosol_accum``, ``aerosol_coarse``.
 
     dict, optional
-        If ``return_extinction=True``, also returns a second dict with
-        keys ``aerosol_accum_extinction_per_m`` and
-        ``aerosol_coarse_extinction_per_m``, each [m^-1] with shape
-        [wavelength, altitude], plus ``extinction_wavelength_nm``.
+        If ``return_extinction=True``, also returns a second dict with,
+        per mode name (``aerosol_accum``, ``aerosol_coarse``):
+
+        - ``{name}_extinction_per_m``: multi-wavelength truth extinction
+          [m^-1], shape [wavelength, altitude], evaluated at
+          ``truth_wavelengths_nm``.
+        - ``{name}_reference_extinction_per_m``: the 745 nm reference
+          extinction [m^-1], shape [altitude] -- the literal
+          ``extinction_per_m`` argument used to construct that mode's
+          ``ExtinctionScatterer`` above.
+        - ``{name}_median_radius_nm``: the clipped median radius [nm],
+          shape [altitude] -- the literal ``median_radius`` argument used
+          to construct that mode's ``ExtinctionScatterer`` above.
+
+        plus ``extinction_wavelength_nm``. The reference/median-radius
+        pair for each mode is exactly what's needed to reconstruct that
+        mode's ``ExtinctionScatterer`` independently (e.g. from a saved
+        column file, via ``get_mode_mie_database(mode_width)`` for the
+        ``mode_db`` argument) without calling this function again.
 
     Notes
     -----
@@ -288,6 +313,11 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
             )
             ext_multi_safe = np.where(r_nm_raw[None, :] < r_min, 0.0, ext_multi)
             true_extinction[f"{name}_extinction_per_m"] = ext_multi_safe
+            # same values just passed to ExtinctionScatterer above -- exposed
+            # so a saved column can be turned back into an equivalent
+            # ExtinctionScatterer without re-deriving them from N/r.
+            true_extinction[f"{name}_reference_extinction_per_m"] = ext_ref_safe
+            true_extinction[f"{name}_median_radius_nm"] = r_nm
 
     if return_extinction:
         true_extinction["extinction_wavelength_nm"] = truth_wavelengths_nm

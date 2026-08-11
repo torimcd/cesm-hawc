@@ -34,11 +34,8 @@ micromamba create -n hawc_env -c conda-forge \
 
 micromamba activate hawc_env
 
-echo "=== Installing hawcsimulator from PyPI ==="
-pip install hawcsimulator
-
-echo "=== Installing cesm-hawc in editable mode ==="
-pip install -e "$REPO_DIR"
+echo "=== Installing cesm-hawc (editable, with the [sim] extra) ==="
+pip install -e "$REPO_DIR[sim]"
 
 echo ""
 echo "Testing imports..."

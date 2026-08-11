@@ -20,6 +20,84 @@ except ImportError as e:
     raise ImportError("hawcsimulator must be installed: pip install hawcsimulator") from e
 
 
+DEFAULT_PRODUCTS = ("l2", "sk2_atmosphere", "front_end_radiance", "l1b")
+
+
+def run_ali_simulation_from_profiles(
+    profiles: dict,
+    alt_m: np.ndarray,
+    sim_geometry: dict,
+    simulator: "IdealALISimulator | None" = None,
+    products: tuple = DEFAULT_PRODUCTS,
+    noise_model: ALINoiseModel | None = None,
+    return_extinction: bool = False,
+    truth_wavelengths_nm: np.ndarray | None = None,
+):
+    """
+    Lower-level single-observation entry point: run the simulator against
+    already-extracted WACCM ``profiles`` and a caller-supplied geometry
+    dict, instead of a file path.
+
+    Used by batch/orbit code paths that manage their own
+    ``WACCMAtmosphere`` (and, optionally, ``IdealALISimulator``) caching
+    across many observations sharing a file, where ``run_ali_simulation()``
+    would redundantly reopen the file per call.
+
+    Parameters
+    ----------
+    profiles : dict
+        Output of ``WACCMAtmosphere.get_column_profiles()``.
+    alt_m : np.ndarray
+        Altitude grid [m], matching ``profiles["altitudes_m"]``.
+    sim_geometry : dict
+        Geometry/instrument keys for ``simulator.run()``, e.g.
+        ``tangent_latitude``, ``tangent_longitude``, ``altitude_grid``,
+        ``polarization_states``, ``sample_wavelengths``, ``time``, and
+        optionally ``observer_latitude``/``observer_longitude``/
+        ``observer_altitude`` or ``tangent_solar_zenith_angle``/
+        ``tangent_solar_azimuth_angle``. Must NOT include ``constituents``
+        or ``l1b_cfg`` — those are set from ``profiles``/``noise_model``.
+    simulator : IdealALISimulator, optional
+        Reused simulator instance. A new one is constructed if omitted.
+    products : tuple of str
+        Products to request from ``simulator.run()``.
+    noise_model : ALINoiseModel, optional
+        If given, passed as ``sim_input["l1b_cfg"]["noise_model"]``. Use
+        ``cesm_hawc.noise.default_noise_model()`` rather than constructing
+        one directly.
+    return_extinction : bool
+        If True, also build and return the true per-mode extinction
+        profiles (see ``constituents.build_waccm_constituents``).
+    truth_wavelengths_nm : array-like, optional
+        Wavelengths for the truth extinction, if ``return_extinction``.
+
+    Returns
+    -------
+    data : dict
+        The raw ``simulator.run()`` result.
+    true_extinction : dict, optional
+        Only returned if ``return_extinction=True``.
+    """
+    if simulator is None:
+        simulator = IdealALISimulator()
+
+    sim_input = dict(sim_geometry)
+    if noise_model is not None:
+        sim_input["l1b_cfg"] = {"noise_model": noise_model}
+
+    if return_extinction:
+        constituents, true_ext = build_waccm_constituents(
+            profiles, alt_m, return_extinction=True,
+            truth_wavelengths_nm=truth_wavelengths_nm,
+        )
+        data = simulator.run(list(products), {**sim_input, "constituents": constituents})
+        return data, true_ext
+
+    constituents = build_waccm_constituents(profiles, alt_m)
+    data = simulator.run(list(products), {**sim_input, "constituents": constituents})
+    return data
+
+
 def run_ali_simulation(
     background_file: str,
     injection_file: str | None = None,

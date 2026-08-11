@@ -3,8 +3,8 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cesm-hawc-ali"
-version = "0.1.0"
+name = "cesm-hawc"
+version = "0.2.0"
 description = "Feed CESM2/WACCM SAI output into the HAWC ALI limb imager simulator"
 readme = "README.md"
 license = { text = "MIT" }
@@ -13,10 +13,26 @@ dependencies = [
     "numpy",
     "xarray",
     "scipy",
+    "pandas",
 ]
 
+[project.scripts]
+cesm-hawc = "cesm_hawc.cli:main"
+
 [project.optional-dependencies]
-dev = ["pytest", "jupyter", "matplotlib", "pandas", "cartopy"]
+# End-to-end simulation (the `cesm-hawc run` CLI command / cesm_hawc.simulation
+# / cesm_hawc.constituents). sasktran2 is NOT listed here: it is conda-forge
+# only (a compiled extension, not published to PyPI) and must be installed
+# separately, e.g. `micromamba install -c conda-forge sasktran2`, before
+# `pip install cesm-hawc[sim]`. See the README's Install section.
+sim = ["hawcsimulator"]
+dev = ["pytest", "jupyter", "matplotlib", "cartopy"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cesm_hawc = ["data/*.nc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,8 +1,9 @@
 #!/bin/bash
 # submit.sh — SLURM batch script for Alliance Canada clusters (Fir/Rorqual/Narval)
 #
-# Edit ACCOUNT, MAIL, and the paths in run_simulation.py, then submit:
-#   sbatch submit.sh
+# Edit ACCOUNT, MAIL, and the paths in config.toml (copy config.example.toml
+# to get started), then submit from the repo root:
+#   sbatch scripts/submit.sh
 #
 #SBATCH --job-name=waccm_ali
 #SBATCH --account=def-yourPI          # ← change to your PI's allocation account
@@ -25,4 +26,4 @@ export OMP_NUM_THREADS=1
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 cd "$SLURM_SUBMIT_DIR"
-python scripts/run_simulation.py
+cesm-hawc run --config config.toml --mode single

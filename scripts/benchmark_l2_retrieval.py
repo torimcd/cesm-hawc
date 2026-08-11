@@ -3,25 +3,18 @@
 benchmark_l2_retrieval.py
 ==========================
 Benchmark the cost of full ALI L2 retrieval, using REAL orbit geometry and
-CESM h2 files pulled through the same machinery as run_orbit_daily.py, to
-assess whether running full L2 on the 6-month OSSE production set is
-realistic, or whether an averaging-kernel shortcut is needed.
+CESM h2 files pulled through cesm_hawc.orbit_files/file_index, to assess
+whether running full L2 on a large production set is realistic, or whether
+an averaging-kernel shortcut is needed.
 
-Place this file alongside run_orbit_daily.py (same scripts/ directory, same
-config.toml at the project root) -- it imports run_orbit_daily as a module
-to reuse orbit-file loading, h2-file indexing, observation extraction, the
-per-worker simulator singleton, and the calibration-cache / IERS / Hamilton
-patches already established there. Importing run_orbit_daily executes its
-module-level setup (config load, logging, monkeypatches) as a side effect,
-which is what we want -- the benchmark should run under the same patched
-environment as production, not a clean one.
+Requires config.toml with an [orbit] section using track_source =
+"real_files". Run from the repo root:
+
+    python scripts/benchmark_l2_retrieval.py --config config.toml
 
 front_end_radiance/l1b are byproducts of the full-L2 product list already
-(FULL_L2_PRODUCTS below). Unlike run_orbit_daily's forward-only calls,
-here we request the full L2 product list -- l2 has never been run in
-production, so there's no existing "forward-only" call to diff against.
-Instead each profile is run through simulator.run(FULL_L2_PRODUCTS, ...)
-exactly once, wrapped in cProfile.
+(FULL_L2_PRODUCTS below). Each profile is run through
+simulator.run(FULL_L2_PRODUCTS, ...) exactly once, wrapped in cProfile.
 
 L2 marginal cost is estimated from the CUMULATIVE time of a single
 identified entry-point function, not an own-time keyword sum. Grepping
@@ -38,12 +31,6 @@ Cumulative time of the single outermost retrieve() call captures
 everything nested under it, RT calls included, without needing to name
 every function that runs during iteration.
 
-Real per-profile forward-model-only cost (for comparison against the L2
-numbers here) should come from your actual Fir job logs / timing around
-run_orbit_daily.py's process_day(), not from re-deriving it in this
-script -- that's your real production baseline under real cluster
-conditions.
-
 ASSUMPTIONS TO VERIFY:
   - L2_ENTRY_POINT_CANDIDATES below assumes
     skretrieval.retrieval.processing.Retrieval.retrieve() is the function
@@ -56,34 +43,42 @@ ASSUMPTIONS TO VERIFY:
   - Convergence / function-evaluation diagnostics are parsed from scipy's
     verbose=2 stdout output (captured via redirect_stdout during the
     profiled call) rather than guessed at from data["l2"].attrs -- see
-    _parse_scipy_convergence(). This was confirmed against real output:
-    the background case in one run genuinely failed to converge ("The
-    maximum number of function evaluations is exceeded"), which the old
-    attrs-based placeholder silently reported as unknown (None) rather
-    than surfacing as a real non-convergence.
+    cesm_hawc.convergence.parse_scipy_convergence(). This was confirmed
+    against real output: a background case in one run genuinely failed to
+    converge ("The maximum number of function evaluations is exceeded"),
+    which an attrs-based placeholder silently reported as unknown (None)
+    rather than surfacing as a real non-convergence.
 """
 
 from __future__ import annotations
 
+import argparse
 import cProfile
 import contextlib
 import io
+import logging
+import os
 import pstats
-import re
 import time
 import traceback
 
 import numpy as np
 import pandas as pd
 
-# Reuses orbit loading, h2 indexing, observation extraction, the per-worker
-# simulator singleton, and all the calibration/IERS/Hamilton patches from
-# production. Must live in the same directory, with the same config.toml
-# available, as run_orbit_daily.py.
-import run_orbit_daily as rod
-
+from cesm_hawc import file_index, orbit_files
+from cesm_hawc.cli import _case_labels
+from cesm_hawc.config import load_config
 from cesm_hawc.constituents import build_waccm_constituents
+from cesm_hawc.convergence import extract_l2_native_diagnostics, parse_scipy_convergence
+from cesm_hawc.noise import default_noise_model
+from cesm_hawc.waccm import WACCMAtmosphere
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 FULL_L2_PRODUCTS = ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"]
 
@@ -93,39 +88,98 @@ FULL_L2_PRODUCTS = ["l2", "sk2_atmosphere", "front_end_radiance", "l1b"]
 # SciPyMinimizer, SciPyMinimizerGrad) iterate -- each iteration calls back
 # into the forward RT model (via statevector.propagate_wf) to rebuild the
 # measurement vector y and jacobian K, then does a Gauss-Newton/Levenberg-
-# Marquardt-style update. That means most of the real cost lives in RT
-# functions called FROM retrieve(), not in functions literally named
-# "retrieve" -- so a keyword sum over per-function OWN time would
-# undercount badly. CUMULATIVE time of the single outermost retrieve()
-# call is used instead, since cumulative time already includes every
-# nested forward-model call made during iteration.
+# Marquardt-style update. CUMULATIVE time of the single outermost
+# retrieve() call is used instead of an own-time keyword sum, since
+# cumulative time already includes every nested forward-model call made
+# during iteration.
 L2_ENTRY_POINT_CANDIDATES = [
     ("skretrieval/retrieval/processing.py", "retrieve"),   # primary: top-level orchestrator
     ("skretrieval/retrieval/rodgers.py", "retrieve"),       # fallback: Rodgers minimizer directly
     ("skretrieval/retrieval/scipy.py", "retrieve"),         # fallback: SciPy minimizer directly
 ]
 
+# ---------------------------------------------------------------------------
+# Config-derived globals, populated by _load_globals() in main()
+# ---------------------------------------------------------------------------
+
+BACKGROUND_CASE = None
+INJECTION_CASES = None
+RUN_START_DATE = None
+RUN_END_DATE = None
+ALT_GRID_M = None
+ALI_WAVELENGTHS = None
+NOISE_MODEL = None
+CENTER_PIXEL = None
+OBS_CADENCE_S = None
+ORBIT_EPOCH = None
+N_WORKERS = None
+WACCM_DATA_DIR = None
+H2_PATTERN = None
+ORBIT_DIR = None
+ORBIT_PATTERN = None
+OUT_DIR = None
+
+_SIMULATOR = None
+
+
+def _load_globals(config_path: str) -> None:
+    global BACKGROUND_CASE, INJECTION_CASES, RUN_START_DATE, RUN_END_DATE
+    global ALT_GRID_M, ALI_WAVELENGTHS, NOISE_MODEL, CENTER_PIXEL, OBS_CADENCE_S
+    global ORBIT_EPOCH, N_WORKERS, WACCM_DATA_DIR, H2_PATTERN, ORBIT_DIR, ORBIT_PATTERN, OUT_DIR
+
+    cfg = load_config(config_path)
+    if cfg.orbit is None or cfg.orbit.track_source != "real_files":
+        raise SystemExit(
+            "config.toml needs an [orbit] section with track_source = "
+            "\"real_files\" for this script."
+        )
+    o, ins = cfg.orbit, cfg.instrument
+    BACKGROUND_CASE = o.background_case
+    INJECTION_CASES = o.injection_cases
+    RUN_START_DATE = o.run_start_date
+    RUN_END_DATE = o.run_end_date
+    ALT_GRID_M = ins.altitude_grid_m()
+    ALI_WAVELENGTHS = np.array(ins.wavelengths_nm)
+    NOISE_MODEL = default_noise_model()
+    CENTER_PIXEL = o.center_pixel
+    OBS_CADENCE_S = o.obs_cadence_s
+    ORBIT_EPOCH = pd.Timestamp(o.orbit_epoch)
+    N_WORKERS = o.n_workers
+    WACCM_DATA_DIR = o.waccm_data_dir
+    H2_PATTERN = o.h2_pattern
+    ORBIT_DIR = o.orbit_dir
+    ORBIT_PATTERN = o.orbit_pattern
+    OUT_DIR = o.out_dir
+
+
+def _get_simulator():
+    """Lazily construct one IdealALISimulator and reuse it across every
+    benchmarked observation in this process (avoids redundant calibration-
+    database access on every single call)."""
+    global _SIMULATOR
+    if _SIMULATOR is None:
+        from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+        _SIMULATOR = IdealALISimulator()
+    return _SIMULATOR
+
+
+def _h2_index(case: str) -> dict:
+    return file_index.index_by_date(os.path.join(WACCM_DATA_DIR, case, "atm", "hist"), H2_PATTERN)
+
 
 # ---------------------------------------------------------------------------
-# Real-data sampling (mirrors run_orbit_daily.main()'s case/date setup)
+# Real-data sampling
 # ---------------------------------------------------------------------------
 
 def build_case_labels() -> dict[str, str]:
-    """Same case-label logic as run_orbit_daily.main(); factored out here
-    since it isn't a standalone function there."""
-    case_labels = {"background": rod.BACKGROUND_CASE}
-    for c in rod.INJECTION_CASES:
-        m = re.match(r"(sai_[\d.]+Tg)", c)
-        label = m.group(1) if m else c
-        case_labels[label] = c
-    return case_labels
+    return _case_labels(BACKGROUND_CASE, INJECTION_CASES)
 
 
-def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42) -> list[dict]:
+def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42) -> tuple[list[dict], dict]:
     """
     Pull real DAYTIME observations spread across the full simulation
-    period and across each sampled day's orbit arc, using the same
-    orbit-day mapping and extraction logic as run_orbit_daily.py.
+    period and across each sampled day's orbit arc, using
+    cesm_hawc.orbit_files' orbit-day mapping and extraction logic.
 
     Sample dates are chosen via a seeded random draw from n_days roughly
     equal bins across the full date range, not evenly-spaced linspace --
@@ -146,10 +200,10 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
 
     Returns (samples, daytime_stats):
       samples: list of dicts {date_str, orbit_day, obs, h2_for_day}, where
-        obs is a single observation dict from rod.extract_observations()
-        (real lat/lon/time/observer geometry) and h2_for_day maps case
-        label -> h2 file path for that date, one entry per sampled
-        observation.
+        obs is a single observation dict from
+        cesm_hawc.orbit_files.extract_observations() (real lat/lon/time/
+        observer geometry) and h2_for_day maps case label -> h2 file path
+        for that date, one entry per sampled observation.
       daytime_stats: {n_daytime_candidates, n_total_candidates,
         observed_daytime_fraction, per_day} -- the REAL daytime fraction
         measured before the pre-filter discards night-side candidates.
@@ -157,19 +211,20 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
         results, which are ALL daytime by construction) for extrapolating
         to the full simulation period via estimate_total_profile_count().
     """
-    orbit_files = rod.load_orbit_files()
-    orbit_day_idx = rod.build_orbit_day_index(orbit_files)
+    orbit_paths = orbit_files.load_orbit_files(ORBIT_DIR, ORBIT_PATTERN)
+    cache_path = os.path.join(OUT_DIR, ".orbit_day_index_cache.json")
+    orbit_day_idx = orbit_files.build_orbit_day_index(orbit_paths, ORBIT_EPOCH, cache_path=cache_path)
     n_orbit_days = max(orbit_day_idx.keys()) + 1
 
     case_labels = build_case_labels()
-    h2_indices = {label: rod.build_h2_index(case) for label, case in case_labels.items()}
+    h2_indices = {label: _h2_index(case) for label, case in case_labels.items()}
 
     bg_dates = sorted(h2_indices["background"].keys())
-    if rod.RUN_START_DATE or rod.RUN_END_DATE:
+    if RUN_START_DATE or RUN_END_DATE:
         bg_dates = [
             d for d in bg_dates
-            if (not rod.RUN_START_DATE or d >= rod.RUN_START_DATE)
-            and (not rod.RUN_END_DATE or d <= rod.RUN_END_DATE)
+            if (not RUN_START_DATE or d >= RUN_START_DATE)
+            and (not RUN_END_DATE or d <= RUN_END_DATE)
         ]
 
     # stratified random sample dates: split the date range into n_days
@@ -182,7 +237,7 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
         hi = max(hi, lo + 1)
         sample_idx.append(int(rng.integers(lo, min(hi, len(bg_dates)))))
 
-    simulator = rod._get_simulator()
+    simulator = _get_simulator()
 
     samples = []
     daytime_stats = {"n_daytime_candidates": 0, "n_total_candidates": 0, "per_day": []}
@@ -193,8 +248,8 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
             continue
 
         sim_date = pd.Timestamp(date_str)
-        day_obs = rod.extract_observations(
-            orbit_day_idx[orbit_day], sim_date, rod.OBS_CADENCE_S, rod.CENTER_PIXEL
+        day_obs = orbit_files.extract_observations(
+            orbit_day_idx[orbit_day], sim_date, OBS_CADENCE_S, CENTER_PIXEL, ORBIT_EPOCH
         )
         if not day_obs:
             continue
@@ -210,11 +265,11 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
         # in the day, using the background atmosphere only -- the SZA
         # check doesn't depend on which case's atmosphere is used, so one
         # atmosphere suffices to classify all of them.
-        waccm = rod.WACCMAtmosphere(h2_for_day["background"], alt_grid_km=rod.ALT_GRID_M / 1e3)
+        waccm = WACCMAtmosphere(h2_for_day["background"], alt_grid_km=ALT_GRID_M / 1e3)
         daytime_obs = []
         for obs in day_obs:
             profiles = waccm.get_column_profiles(obs["lat"], obs["lon"], time_index=0)
-            constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+            constituents = build_waccm_constituents(profiles, ALT_GRID_M)
             sim_input = {**_build_sim_input(obs), "constituents": constituents}
             try:
                 simulator.run(["front_end_radiance", "l1b"], sim_input)
@@ -224,7 +279,7 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
                     continue
                 raise
 
-        rod.log.info("%s: %d/%d observations are daytime", date_str, len(daytime_obs), len(day_obs))
+        log.info("%s: %d/%d observations are daytime", date_str, len(daytime_obs), len(day_obs))
         daytime_stats["n_daytime_candidates"] += len(daytime_obs)
         daytime_stats["n_total_candidates"] += len(day_obs)
         daytime_stats["per_day"].append({
@@ -254,22 +309,21 @@ def sample_observations(n_days: int = 3, n_obs_per_day: int = 8, seed: int = 42)
 
 
 def _build_sim_input(obs: dict) -> dict:
-    """Matches process_day()'s sim_input construction exactly -- SZA/SAA
-    are NOT passed explicitly; they're computed automatically from time +
-    observer position, same as production."""
+    """Matches cesm_hawc.cli's orbit-track real_files sim_input construction
+    exactly -- SZA/SAA are NOT passed explicitly; they're computed
+    automatically from time + observer position, same as production."""
     sim_input = {
         "tangent_latitude": float(obs["lat"]),
         "tangent_longitude": float(obs["lon"]),
         "observer_latitude": obs["observer_lat"],
         "observer_longitude": obs["observer_lon"],
         "observer_altitude": obs["observer_alt"],
-        "altitude_grid": rod.ALT_GRID_M,
+        "altitude_grid": ALT_GRID_M,
         "polarization_states": ["I", "dolp"],
-        "sample_wavelengths": rod.ALI_WAVELENGTHS,
+        "sample_wavelengths": ALI_WAVELENGTHS,
         "time": obs["time"],
+        "l1b_cfg": {"noise_model": NOISE_MODEL},
     }
-    if rod.NOISE_MODEL is not None:
-        sim_input["l1b_cfg"] = {"noise_model": rod.NOISE_MODEL}
     return sim_input
 
 
@@ -291,65 +345,11 @@ def list_retrieve_functions(stats: pstats.Stats) -> None:
     count and cumulative time. Use this if _find_l2_entry_cumulative_time
     returns None -- it means none of L2_ENTRY_POINT_CANDIDATES matched,
     and this shows what's actually in the call graph so you can update the
-    candidate list. Also useful as a sanity check even when a candidate
-    IS found: a call count of 1 on the outermost retrieve() is expected
-    (called once per profile); if the underlying Minimizer.retrieve() also
-    shows cc=1, that's consistent with one retrieve() call per profile
-    doing N forward-model iterations internally -- check the RT function
-    call counts too (e.g. sasktran2 entry points) to confirm N > 1."""
+    candidate list."""
     print(f"{'file':<70} {'ncalls':>8} {'cumtime':>10}")
     for (filename, _lineno, fname), (cc, _nc, _tt, ct, _callers) in stats.stats.items():
         if fname == "retrieve":
             print(f"{filename:<70} {cc:>8} {ct:>10.4f}")
-
-
-# scipy.optimize.least_squares' verbose=2 output always ends with one of
-# these termination messages (confirmed from actual run output: e.g.
-# "The maximum number of function evaluations is exceeded." for the
-# non-converged background case). Parsing this directly is more reliable
-# than guessing at hawcsimulator/skretrieval's internal attrs, which
-# turned out to carry no diagnostics at all (_extract_l2_diagnostics
-# previously returned None for every single row, including the background
-# case that actually failed to converge -- silently masking a real
-# non-convergence as status="ok").
-_SCIPY_CONVERGED_PATTERNS = [
-    (re.compile(r"`ftol` termination condition is satisfied"), "ftol"),
-    (re.compile(r"`xtol` termination condition is satisfied"), "xtol"),
-    (re.compile(r"`gtol` termination condition is satisfied"), "gtol"),
-]
-_SCIPY_NOT_CONVERGED_PATTERNS = [
-    (re.compile(r"maximum number of function evaluations is exceeded", re.IGNORECASE), "max_nfev"),
-    (re.compile(r"maximum number of iterations is exceeded", re.IGNORECASE), "max_iter"),
-]
-_SCIPY_NFEV_PATTERN = re.compile(r"Function evaluations (\d+)")
-
-
-def _parse_scipy_convergence(captured_stdout: str) -> dict:
-    """Parse scipy.optimize.least_squares' verbose=2 output (captured via
-    stdout redirection during the profiled call) for the real convergence
-    status and function-evaluation count. Returns
-    {converged, termination_reason, n_function_evaluations}, with None
-    values if no recognized message was found (e.g. verbose output isn't
-    actually coming from this call, or the format changed)."""
-    result = {"converged": None, "termination_reason": None, "n_function_evaluations": None}
-
-    for pattern, reason in _SCIPY_CONVERGED_PATTERNS:
-        if pattern.search(captured_stdout):
-            result["converged"] = True
-            result["termination_reason"] = reason
-            break
-    else:
-        for pattern, reason in _SCIPY_NOT_CONVERGED_PATTERNS:
-            if pattern.search(captured_stdout):
-                result["converged"] = False
-                result["termination_reason"] = reason
-                break
-
-    m = _SCIPY_NFEV_PATTERN.search(captured_stdout)
-    if m:
-        result["n_function_evaluations"] = int(m.group(1))
-
-    return result
 
 
 def _save_l2_output(data_full: dict, out_path_base: str) -> dict:
@@ -357,17 +357,11 @@ def _save_l2_output(data_full: dict, out_path_base: str) -> dict:
     convergence metadata.
 
     Only saves data_full['l2'] -- confirmed via inspect_profile_functions()
-    to be a clean xarray Dataset (data_vars include the retrieved profiles,
-    priors, 1-sigma errors, and averaging kernels for O3 VMR, aerosol
-    extinction, aerosol median radius, plus num_iterations/cost/geometry),
-    so .to_netcdf() just works.
-
-    data_full['sk2_atmosphere'] is deliberately NOT saved: it's a
-    sasktran2.atmosphere.Atmosphere object, not xarray, wrapping an
-    internal_object that's almost certainly a compiled C++/Rust extension
-    type -- pickling it is likely to fail or produce something large and
-    fragile, and it's the forward model's internal RT state rather than
-    retrieval output, so there's little scientific value in keeping it.
+    to be a clean xarray Dataset, so .to_netcdf() just works.
+    data_full['sk2_atmosphere'] is deliberately NOT saved: it wraps a
+    compiled sasktran2 extension type, not xarray -- pickling it is likely
+    to fail or produce something large and fragile, and it's the forward
+    model's internal RT state rather than retrieval output.
 
     Returns {saved, format, paths (dict, currently just {'l2': path}), error}.
     """
@@ -390,27 +384,6 @@ def _save_l2_output(data_full: dict, out_path_base: str) -> dict:
     return result
 
 
-def _extract_l2_native_diagnostics(data_full: dict) -> dict:
-    """Pull num_iterations/cost directly from the l2 Dataset, as a
-    cross-check against the stdout-regex-parsed convergence info from
-    _parse_scipy_convergence(). More reliable in principle since it comes
-    from the dataset itself rather than string-matching printed output --
-    worth comparing the two once you have real data, and preferring this
-    if they disagree."""
-    l2 = data_full.get("l2")
-    if l2 is None:
-        return {"l2_num_iterations": None, "l2_final_cost": None}
-    try:
-        n_iter = int(l2["num_iterations"].values) if "num_iterations" in l2 else None
-    except Exception:
-        n_iter = None
-    try:
-        cost = float(l2["cost"].values) if "cost" in l2 else None
-    except Exception:
-        cost = None
-    return {"l2_num_iterations": n_iter, "l2_final_cost": cost}
-
-
 def _actual_sza(data: dict) -> float | None:
     """Pull the SZA the simulator actually computed for this observation
     (from the l1b dataset), rather than a value we specified -- since
@@ -420,7 +393,7 @@ def _actual_sza(data: dict) -> float | None:
     if l1b is None:
         return None
     try:
-        ds = rod._l1b_image_to_dataset(l1b)
+        ds = orbit_files.l1b_image_to_dataset(l1b, ALI_WAVELENGTHS)
         return float(np.mean(ds["solar_zenith_angle"].values))
     except Exception:
         return None
@@ -435,14 +408,14 @@ def find_daytime_sample(samples: list[dict]) -> tuple[dict, str]:
     tangent point, for use with inspect_profile_functions(). Does a cheap
     forward-only check (not the full L2 profile) to avoid wasting time on
     a full retrieval call just to find out it's night-side."""
-    simulator = rod._get_simulator()
+    simulator = _get_simulator()
     for sample in samples:
         for case_label, h2_path in sample["h2_for_day"].items():
-            waccm = rod.WACCMAtmosphere(h2_path, alt_grid_km=rod.ALT_GRID_M / 1e3)
+            waccm = WACCMAtmosphere(h2_path, alt_grid_km=ALT_GRID_M / 1e3)
             profiles = waccm.get_column_profiles(
                 sample["obs"]["lat"], sample["obs"]["lon"], time_index=0
             )
-            constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+            constituents = build_waccm_constituents(profiles, ALT_GRID_M)
             sim_input = {**_build_sim_input(sample["obs"]), "constituents": constituents}
             try:
                 simulator.run(["front_end_radiance", "l1b"], sim_input)
@@ -457,9 +430,7 @@ def find_daytime_sample(samples: list[dict]) -> tuple[dict, str]:
 def _describe_l2_output(l2_obj, max_depth: int = 2, _depth: int = 0) -> None:
     """Print the real structure of whatever data_full['l2'] actually is --
     type, and for common container types (dict, xarray Dataset/DataArray),
-    its keys/variables/coords/shape. We never inspected this directly
-    before (only .attrs, which turned out empty) -- printing the real
-    thing avoids guessing at a save format."""
+    its keys/variables/coords/shape."""
     indent = "  " * _depth
     print(f"{indent}type: {type(l2_obj)}")
 
@@ -471,9 +442,6 @@ def _describe_l2_output(l2_obj, max_depth: int = 2, _depth: int = 0) -> None:
                 _describe_l2_output(v, max_depth, _depth + 2)
         return
 
-    # xarray Dataset/DataArray have these attrs; check by duck-typing
-    # rather than importing xarray here, since we don't know for sure
-    # what type this is until we see it.
     if hasattr(l2_obj, "data_vars"):
         print(f"{indent}xarray-like Dataset")
         print(f"{indent}data_vars: {list(l2_obj.data_vars)}")
@@ -491,14 +459,14 @@ def _describe_l2_output(l2_obj, max_depth: int = 2, _depth: int = 0) -> None:
 
 def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: int = 40) -> pstats.Stats:
     """Run one real observation under cProfile and print the top functions
-    by cumulative time, so you can see real function names and tune
-    RETRIEVAL_KEYWORDS before running the full benchmark. Also prints the
-    real structure of data_full['l2'] (the actual retrieval output) so a
-    save format can be chosen based on what's actually there."""
+    by cumulative time, so you can see real function names and confirm
+    L2_ENTRY_POINT_CANDIDATES before running the full benchmark. Also
+    prints the real structure of data_full['l2'] so a save format can be
+    chosen based on what's actually there."""
     h2_path = sample["h2_for_day"][case_label]
-    waccm = rod.WACCMAtmosphere(h2_path, alt_grid_km=rod.ALT_GRID_M / 1e3)
+    waccm = WACCMAtmosphere(h2_path, alt_grid_km=ALT_GRID_M / 1e3)
     profiles = waccm.get_column_profiles(sample["obs"]["lat"], sample["obs"]["lon"], time_index=0)
-    constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+    constituents = build_waccm_constituents(profiles, ALT_GRID_M)
     sim_input = {**_build_sim_input(sample["obs"]), "constituents": constituents}
 
     profiler = cProfile.Profile()
@@ -535,11 +503,11 @@ def inspect_profile_functions(sample: dict, case_label: str, simulator, top_n: i
 def benchmark_observation(sample: dict, case_label: str, simulator, save_output_dir: str | None = None) -> dict:
     """Run the full-L2 simulator call once for one real (case, observation)
     pair, under cProfile, and split total time into 'retrieval' vs 'other'
-    based on RETRIEVAL_KEYWORDS matching against function names.
+    based on the identified L2 entry point's cumulative time.
 
     If save_output_dir is given, also persists the actual retrieval output
-    (data_full['l2'] and ['sk2_atmosphere']) to disk via _save_l2_output(),
-    not just timing/convergence metadata -- see l2_output_* result fields."""
+    (data_full['l2']) to disk via _save_l2_output(), not just timing/
+    convergence metadata -- see l2_output_* result fields."""
     obs = sample["obs"]
     result = {
         "case_label": case_label,
@@ -569,9 +537,9 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
 
     try:
         h2_path = sample["h2_for_day"][case_label]
-        waccm = rod.WACCMAtmosphere(h2_path, alt_grid_km=rod.ALT_GRID_M / 1e3)
+        waccm = WACCMAtmosphere(h2_path, alt_grid_km=ALT_GRID_M / 1e3)
         profiles = waccm.get_column_profiles(obs["lat"], obs["lon"], time_index=0)
-        constituents = build_waccm_constituents(profiles, rod.ALT_GRID_M)
+        constituents = build_waccm_constituents(profiles, ALT_GRID_M)
         sim_input = {**_build_sim_input(obs), "constituents": constituents}
 
         profiler = cProfile.Profile()
@@ -585,9 +553,7 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
             # Must always disable, even on exception (e.g. night-side SZA
             # ValueError) -- cProfile installs a single global C-level
             # hook, so skipping disable() here leaves it stuck installed
-            # and the NEXT profiler.enable() call in the loop fails with
-            # "Cannot install a profile function while another profile
-            # function is being installed".
+            # and the NEXT profiler.enable() call in the loop fails.
             profiler.disable()
         t1 = time.perf_counter()
         result["total_time_s"] = t1 - t0
@@ -600,12 +566,12 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
         if retrieval_time is not None:
             result["non_retrieval_time_s"] = result["total_time_s"] - retrieval_time
 
-        diag = _parse_scipy_convergence(stdout_capture.getvalue())
+        diag = parse_scipy_convergence(stdout_capture.getvalue())
         result["converged"] = diag["converged"]
         result["termination_reason"] = diag["termination_reason"]
         result["n_function_evaluations"] = diag["n_function_evaluations"]
 
-        native_diag = _extract_l2_native_diagnostics(data_full)
+        native_diag = extract_l2_native_diagnostics(data_full.get("l2"))
         result["l2_num_iterations"] = native_diag["l2_num_iterations"]
         result["l2_final_cost"] = native_diag["l2_final_cost"]
 
@@ -613,7 +579,6 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
             # Save for BOTH converged and non-converged cases -- a failed
             # retrieval's output is still scientifically informative (what
             # did it converge TOWARD before hitting max_nfev?).
-            import os
             os.makedirs(save_output_dir, exist_ok=True)
             safe_time = str(pd.Timestamp(obs["time"])).replace(" ", "T").replace(":", "")
             out_path_base = os.path.join(
@@ -627,7 +592,7 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
 
     except ValueError as e:
         if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
-            # night-side tangent point, same skip condition as process_day
+            # night-side tangent point, same skip condition as production
             result["status"] = "skipped_night"
         else:
             result["status"] = "error"
@@ -644,10 +609,8 @@ def benchmark_observation(sample: dict, case_label: str, simulator, save_output_
 # Must match benchmark_observation()'s result dict keys, in order. Used to
 # detect a schema mismatch against an existing out_csv before appending --
 # this fixed a real bug where the same output filename got reused across
-# script versions during iterative development (this one added
-# termination_reason/n_function_evaluations/error_traceback after the file
-# already had a header without them), silently corrupting the CSV with
-# inconsistent column counts across appended chunks.
+# script versions during iterative development, silently corrupting the
+# CSV with inconsistent column counts across appended chunks.
 _RESULT_FIELDNAMES = [
     "case_label", "date_str", "orbit_day", "lat", "lon", "time",
     "actual_sza_deg", "total_time_s", "l2_marginal_time_s", "l2_entry_point",
@@ -662,9 +625,7 @@ def _load_completed_keys(csv_path: str | None) -> set[tuple[str, str, str]]:
     """Read an existing benchmark CSV (if any) and return the set of
     (date_str, case_label, time) keys already completed, so a re-run
     after a walltime kill skips them instead of redoing 100-600s of work
-    that's already captured. This has now happened twice -- worth having
-    real resume support rather than relying on manual dedup afterward."""
-    import os
+    that's already captured."""
     if not csv_path or not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
         return set()
     try:
@@ -679,7 +640,7 @@ def _load_completed_keys(csv_path: str | None) -> set[tuple[str, str, str]]:
 
 def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_dir: str | None = None) -> pd.DataFrame:
     """Run the L2 benchmark across every (sample observation, case) pair.
-    Uses the same per-worker simulator singleton as production.
+    Uses one simulator instance reused across every call in this process.
 
     If save_output_dir is given, the actual retrieval output (not just
     timing/convergence metadata) is saved per profile via
@@ -688,30 +649,25 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_d
 
     Writes each result to out_csv incrementally (flushed after every row),
     not just once at the end -- L2 retrievals here run 100-600+s each with
-    high variance (some cases converge in ~25 function evals, others hit
-    the 200-eval cap without converging), so a walltime kill or crash
-    partway through a large sample would otherwise lose everything already
-    computed.
+    high variance, so a walltime kill or crash partway through a large
+    sample would otherwise lose everything already computed.
 
     RESUMABLE: if out_csv already has rows from a previous (killed) run
     over the same samples, matching (date_str, case_label, time) combos
     are skipped rather than recomputed. Returns the FULL combined dataset
-    (old + newly computed rows), read back from out_csv, so downstream
-    summarize()/estimate_total_profile_count() see everything -- not just
-    whatever this particular invocation computed."""
-    simulator = rod._get_simulator()
+    (old + newly computed rows), read back from out_csv."""
+    simulator = _get_simulator()
 
     csv_path = out_csv
     header_written = False
     if csv_path is not None:
-        import os
         file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
         if file_exists:
             with open(csv_path) as f:
                 existing_header = f.readline().strip().split(",")
             if existing_header != _RESULT_FIELDNAMES:
                 backup_path = csv_path + ".schema_mismatch.bak"
-                rod.log.warning(
+                log.warning(
                     "%s has a different column schema than the current script "
                     "(existing: %s | current: %s) -- likely reused across script "
                     "versions during development. Backing up to %s and starting "
@@ -724,8 +680,8 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_d
 
     completed = _load_completed_keys(out_csv)
     if completed:
-        rod.log.info("Resuming: %d results already in %s, matching samples will be skipped",
-                      len(completed), out_csv)
+        log.info("Resuming: %d results already in %s, matching samples will be skipped",
+                  len(completed), out_csv)
 
     n_total = sum(len(s["h2_for_day"]) for s in samples)
     n_done = 0
@@ -745,7 +701,7 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_d
                 row_df.to_csv(csv_path, mode="a", index=False, header=not header_written)
                 header_written = True
 
-            rod.log.info(
+            log.info(
                 "[%d/%d new, %d already done] %s %s: status=%s total=%.1fs l2_marginal=%s converged=%s (%s, nfev=%s)",
                 n_done, n_total - n_skipped_existing, n_skipped_existing,
                 sample["date_str"], case_label,
@@ -758,12 +714,10 @@ def run_benchmark(samples: list[dict], out_csv: str | None = None, save_output_d
             )
 
     if n_skipped_existing:
-        rod.log.info("Skipped %d already-completed samples from a previous run", n_skipped_existing)
+        log.info("Skipped %d already-completed samples from a previous run", n_skipped_existing)
 
-    if csv_path is not None:
-        import os
-        if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
-            return pd.read_csv(csv_path)
+    if csv_path is not None and os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+        return pd.read_csv(csv_path)
     return pd.DataFrame([])
 
 
@@ -792,8 +746,8 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
 def estimate_total_profile_count(daytime_fraction: float, n_cases: int) -> dict:
     """
     Rough estimate of total ALI observations across the full simulation
-    period, using the actual number of simulation days from run_orbit_
-    daily's h2 file index and a REAL measured daytime fraction.
+    period, using the actual number of simulation days from the h2 file
+    index and a REAL measured daytime fraction.
 
     daytime_fraction must come from sample_observations()'s returned
     daytime_stats["observed_daytime_fraction"], not from the benchmark
@@ -801,20 +755,17 @@ def estimate_total_profile_count(daytime_fraction: float, n_cases: int) -> dict:
     return confirmed-daytime observations, every row in the benchmark
     results has status="ok" by construction, making
     (df["status"]=="ok").sum()/len(df) trivially 1.0 and silently
-    doubling this estimate (confirmed against real data: two sampled
-    days showed ~50% daytime, not the 100% the old df-derived fraction
-    implied).
+    doubling this estimate.
     """
-    case_labels = build_case_labels()
-    bg_dates = sorted(rod.build_h2_index(rod.BACKGROUND_CASE).keys())
-    if rod.RUN_START_DATE or rod.RUN_END_DATE:
+    bg_dates = sorted(_h2_index(BACKGROUND_CASE).keys())
+    if RUN_START_DATE or RUN_END_DATE:
         bg_dates = [
             d for d in bg_dates
-            if (not rod.RUN_START_DATE or d >= rod.RUN_START_DATE)
-            and (not rod.RUN_END_DATE or d <= rod.RUN_END_DATE)
+            if (not RUN_START_DATE or d >= RUN_START_DATE)
+            and (not RUN_END_DATE or d <= RUN_END_DATE)
         ]
     n_days = len(bg_dates)
-    obs_per_day_theoretical = 86400 // rod.OBS_CADENCE_S
+    obs_per_day_theoretical = 86400 // OBS_CADENCE_S
 
     total_profiles = int(n_days * obs_per_day_theoretical * daytime_fraction * n_cases)
     return {
@@ -832,7 +783,7 @@ def extrapolate_to_full_run(
     n_parallel_workers: int,
     case_label: str | None = None,
 ) -> dict:
-    """Rough walltime extrapolation for the full 6-month run.
+    """Rough walltime extrapolation for a full production run.
 
     total_profile_count: from estimate_total_profile_count(), or your own
         number if you already track it precisely.
@@ -856,18 +807,20 @@ def extrapolate_to_full_run(
     }
 
 
-if __name__ == "__main__":
+def main(config_path: str) -> None:
+    _load_globals(config_path)
+
     # Pull real observations spread across the simulation period.
-    # Start small -- 3 days x 8 obs/day x n_cases is enough to sanity-check
+    # Start small -- 2 days x 4 obs/day x n_cases is enough to sanity-check
     # before scaling up to a bigger sample.
     samples, daytime_stats = sample_observations(n_days=2, n_obs_per_day=4)
-    rod.log.info("Sampled %d observations across %d days", len(samples),
-                 len({s["date_str"] for s in samples}))
-    rod.log.info("Real observed daytime fraction: %.3f (%d/%d candidates)",
-                 daytime_stats["observed_daytime_fraction"],
-                 daytime_stats["n_daytime_candidates"], daytime_stats["n_total_candidates"])
+    log.info("Sampled %d observations across %d days", len(samples),
+             len({s["date_str"] for s in samples}))
+    log.info("Real observed daytime fraction: %.3f (%d/%d candidates)",
+             daytime_stats["observed_daytime_fraction"],
+             daytime_stats["n_daytime_candidates"], daytime_stats["n_total_candidates"])
 
-    simulator = rod._get_simulator()
+    simulator = _get_simulator()
 
     # Run this first, on one real daytime observation, to see actual
     # function names in the call graph and confirm L2_ENTRY_POINT_CANDIDATES.
@@ -888,6 +841,14 @@ if __name__ == "__main__":
     extrap = extrapolate_to_full_run(
         summary,
         total_profile_count=count_est["estimated_total_profile_count"],
-        n_parallel_workers=rod.N_WORKERS,
+        n_parallel_workers=N_WORKERS,
     )
     print(extrap)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__,
+                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--config", default="config.toml")
+    args = parser.parse_args()
+    main(args.config)

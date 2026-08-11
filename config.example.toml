@@ -2,9 +2,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Copy this file to config.toml (same directory) and fill in your paths.
 # config.toml is gitignored so local and HPC paths stay out of the repo.
+#
+# Used by the `cesm-hawc` CLI:
+#   cesm-hawc save-inputs --config config.toml --mode {single,batch,orbit-track,orbit-file}
+#   cesm-hawc run         --config config.toml --mode {single,batch,orbit-track,orbit-file}
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Single-month run (scripts/run_simulation.py) ──────────────────────────
+# ── Single column, one file, end to end (--mode single) ───────────────────
 [single]
 waccm_background = "/path/to/background.cam.h0.YYYY-MM.nc"
 waccm_injection  = ""              # leave empty ("") to skip injection run
@@ -12,7 +16,7 @@ time_idx         = 0              # time slice index within the file
 obs_time         = "2035-02-01T12:00:00Z"
 out_dir          = "~/results/hawc_ali/"
 
-# ── Batch run (scripts/run_simulation_all.py) ─────────────────────────────
+# ── Batch: a directory of monthly h0 files (--mode batch) ─────────────────
 [batch]
 waccm_background_dir = "/path/to/background/atm/hist/"
 waccm_injection_dir  = ""          # leave empty ("") to skip injection run
@@ -21,32 +25,29 @@ month_filter         = []          # e.g. ["2034-01", "2034-02"]; [] = all month
 out_dir              = "~/results/hawc_ali/"
 n_workers            = 4          # parallel worker processes; 1 = serial
 
-# ── Observation geometry (shared by both scripts) ─────────────────────────
+# ── Observation geometry (shared by single/batch) ──────────────────────────
 [geometry]
 tangent_lat = 30.6    # degrees — match your SO₂ injection latitude
 tangent_lon = 180.0   # degrees
 sza_deg     = 60.0
 saa_deg     = 0.0
 
-# ── CESM archive (for Figures A–C in plot_results_all.py) ────────────────
-[cesm]
-archive_dir  = "~/scratch/cesm/output/archive/"   # root containing <casename>/atm/hist/
-bg_casename  = "sai_background_2035_001"
-inj_casename = "sai_1.0Tg_2035_001"
-
-# ── Plot display settings (shared by plot_results.py and plot_results_all.py) ─
-[plots]
-alt_min_km   = 5.0
-alt_max_km   = 40.0
-ref_alt_km   = 22.0    # reference line drawn on each panel (injection altitude)
-strat_min_km = 15.0    # lower bound for stratospheric column integrals
-
-# ── Orbit track run (scripts/run_orbit.py) ───────────────────────────────
+# ── Orbit-track runs (--mode orbit-track) ──────────────────────────────────
+# track_source = "analytical": an analytical sun-synchronous ground track
+#   matched to a directory of hourly h1 files by nearest timestamp.
+# track_source = "real_files": a real HAWC orbit-track file set matched to
+#   daily h2 files by day-of-year offset from orbit_epoch, with optional
+#   multi-case injection runs and full L2 retrieval.
 [orbit]
-# Hourly h1 input files (separate from [batch] monthly h0 files)
+track_source = "analytical"
+
+out_dir   = "~/results/hawc_ali_orbit/"
+n_workers = 4          # parallel worker processes (by day); 1 = serial
+
+# -- analytical --
 waccm_background_dir = "/path/to/background/atm/hist/"
 waccm_injection_dir  = ""              # leave empty ("") to skip injection run
-h2_pattern           = "*.cam.h2.*.nc"
+file_pattern         = "*.cam.h1.*.nc"
 
 # Simulation time range (ISO-8601). Leave empty to use all available files.
 start_time = ""    # e.g. "2035-01-01T00:00:00Z"
@@ -57,23 +58,31 @@ altitude_km     = 600.0   # orbit altitude [km]
 inclination_deg = 98.0    # ~98° = sun-synchronous; adjust to match real orbit
 start_lon_deg   = 0.0     # equator-crossing longitude at start_time [degrees]
 
-# Observation cadence along the orbital track
-obs_cadence_s = 60.0    # seconds between simulated observations
+obs_cadence_s = 60.0      # seconds between simulated observations
 
-# Maximum allowed gap between an orbit timestamp and the nearest h1 file [s].
+# Maximum allowed gap between an orbit timestamp and the nearest file [s].
 # Observations with no file within this tolerance are skipped.
 max_gap_s = 1800.0    # 30 min
 
-out_dir   = "~/results/hawc_ali_orbit/"
-n_workers = 4          # parallel worker processes (by day); 1 = serial
+# -- real_files (used only when track_source = "real_files") --
+# orbit_dir             = "/path/to/orbit/files/"
+# orbit_pattern         = "orbit_*.nc"
+# orbit_epoch           = "2019-08-01"   # orbit file set's own time origin
+# center_pixel          = 256            # across-track index used as tangent point
+# waccm_data_dir        = "/path/to/cesm/output/archive/"   # root containing <casename>/atm/hist/
+# h2_pattern             = "*.cam.h2.*.nc"
+# sim_start              = "2035-01-01"  # first simulation date, maps to orbit day 0
+# background_case        = "sai_background_2035_001"
+# injection_cases        = ["sai_1.0Tg_2035_001", "sai_0.1Tg_2035_001"]
+# run_start_date         = ""            # optional date-range restriction, "" = all
+# run_end_date           = ""
+# run_l2                 = false         # true = also run full L2 retrieval (slow)
 
-# ── Real orbit file run (scripts/run_orbit_real.py) ──────────────────────
+# ── Per-orbit-file, per-pixel runs (--mode orbit-file) ─────────────────────
 [orbit_real]
-# Directory containing HAWC orbit NetCDF files (one file per orbit pass)
 orbit_dir     = "/path/to/orbit/files/"
 orbit_pattern = "orbit_*.nc"
 
-# Daily WACCM h2 files — one file per calendar day
 waccm_background_dir = "/path/to/background/atm/hist/"
 waccm_injection_dir  = ""              # leave empty ("") to skip injection run
 h2_pattern           = "*.cam.h2.*.nc"
@@ -89,14 +98,15 @@ across_indices = [256]
 # Use 10 or 60 to subsample for faster runs.
 time_stride = 1
 
-# ── ALI instrument configuration (shared by both scripts) ─────────────────
+# ── ALI instrument configuration (shared by all modes) ─────────────────────
 [instrument]
 # Wavelengths for the ideal spectrograph simulator [nm].
 # 3-channel quickstart (fast):  [470.0, 745.0, 1020.0]
 # Extended production set:      [470.0, 525.0, 745.0, 1020.0, 1230.0, 1450.0, 1500.0]
 wavelengths_nm   = [470.0, 745.0, 1020.0]
-# Noise model: set to a float to enable (e.g. 0.005), or leave empty ("") to disable.
-noise_straylight_fraction = ""
 alt_grid_start_m = 0.0
 alt_grid_stop_m  = 65000.0   # inclusive upper bound [m]
 alt_grid_step_m  = 1000.0
+# Note: there is no noise_straylight_fraction key. The ALINoiseModel's
+# straylight fraction is always hardcoded to 0.0 (see cesm_hawc.noise) and
+# is not user-configurable.

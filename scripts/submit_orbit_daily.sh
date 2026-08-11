@@ -1,5 +1,6 @@
 #!/bin/bash
-#SBATCH --account=rrg-czg
+# Submit from the repo root: sbatch scripts/submit_orbit_daily.sh
+#SBATCH --account=def-yourPI          # ← change to your PI's allocation account
 #SBATCH --job-name=orbit_daily_l2
 #SBATCH --time=30:00:00
 #SBATCH --nodes=1
@@ -36,7 +37,7 @@
 # --format=JobID,MaxRSS,NNodes`. If real usage is well under 8G/core, you
 # can lower --mem-per-cpu and raise --cpus-per-task/n_workers together (up
 # to 182, Fir's per-node core count) for a further walltime reduction --
-# see run_orbit_daily.py's day-level/profile-level resume, which makes
+# see cesm_hawc.resume's day-level/profile-level resume, which makes
 # this safe to experiment with incrementally rather than committing to a
 # larger worker count on the very first full run.
 
@@ -62,7 +63,7 @@ echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Workers requested: 90 (cpus-per-task) -- confirm config.toml's n_workers matches"
 
-cd /project/6079534/vmcd/cesm-hawc/scripts
-python run_orbit_daily.py
+cd "$SLURM_SUBMIT_DIR"
+cesm-hawc run --config config.toml --mode orbit-track
 
 echo "Job finished: $(date)"

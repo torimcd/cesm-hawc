@@ -261,7 +261,7 @@ class WACCMAtmosphere:
 
         CONFIRMED BUG (fixed here): this file's `lon` coordinate spans
         [0.0, 358.75] (confirmed directly against real h2 output), but
-        callers throughout this pipeline (run_orbit_daily.py's
+        callers throughout this pipeline (cesm_hawc.orbit_files'
         extract_observations(), which reads longitude straight from
         orbit_*.nc with no conversion) pass longitude in -180/180
         convention. `.sel(lon=..., method="nearest")` against a 0-360
@@ -397,6 +397,57 @@ class WACCMAtmosphere:
             "dominant_mode": dominant,
         }
 
+    def extract_cesm_extinction(self, lat: float, lon: float, time_index: int,
+                                 alt_m: np.ndarray,
+                                 varnames: tuple = ("EXTINCTdn", "EXTINCTUVdn",
+                                                     "EXTINCTNIRdn")) -> dict:
+        """
+        Extract CESM's own internally-computed aerosol extinction on model
+        levels, interpolated onto ``alt_m``.
+
+        CESM computes ``EXTINCTdn`` (550 nm), ``EXTINCTUVdn`` (350 nm), and
+        ``EXTINCTNIRdn`` (1020 nm) directly during the model run, including
+        all aerosol species — this is strictly preferable to computing
+        extinction analytically from N and r (as ``constituents.py`` does
+        for the simulator's *input*) when the goal is an independent
+        cross-check, since it reflects what the model actually computed.
+        ``EXTINCTNIRdn`` at 1020 nm is a direct ALI wavelength match and
+        needs no wavelength correction for comparison with retrieved
+        extinction.
+
+        Parameters
+        ----------
+        lat, lon, time_index : column coordinates, as in
+            ``get_column_profiles``.
+        alt_m : np.ndarray
+            Altitude grid [m] to interpolate onto.
+        varnames : tuple of str
+            CESM variable names to extract, if present in the file.
+
+        Returns
+        -------
+        dict of ``{varname: np.ndarray}`` for whichever of ``varnames`` are
+        present in the file (missing ones are silently omitted).
+        """
+        col = self.ds.isel(time=time_index).sel(lat=lat, lon=lon % 360.0, method="nearest")
+
+        p0 = self._p0()
+        ps = float(col["PS"].values)
+        pressure = hybrid_to_pressure(col["hyam"].values, col["hybm"].values, p0, ps)
+        T_v = col["T"].values * (1.0 + (R_H2O / R_DRY - 1.0) * col["Q"].values)
+        altitude = pressure_to_altitude(pressure, T_v, ps, self.z_surface)
+
+        idx = np.argsort(altitude)
+        result: dict[str, np.ndarray] = {}
+        for varname in varnames:
+            if varname not in col:
+                continue
+            vals = np.maximum(col[varname].values, 0.0)
+            f = interp1d(altitude[idx], vals[idx], kind="linear",
+                         bounds_error=False, fill_value=0.0)
+            result[varname] = f(alt_m)
+        return result
+
     def save_column_profiles(self, lat: float, lon: float,
                               output_path: str, time_index: int = 0) -> None:
         """
@@ -424,7 +475,7 @@ class WACCMAtmosphere:
                 "time_index":  int(time_index),
                 "sigma_a1":    scalars.get("sulfate_a1_sigma", 1.8),
                 "sigma_a3":    scalars.get("sulfate_a3_sigma", 1.2),
-                "description": "WACCM column profiles from cesm-hawc-ali",
+                "description": "WACCM column profiles from cesm-hawc",
             }
         )
         ds.to_netcdf(output_path)

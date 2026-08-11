@@ -1,5 +1,6 @@
 #!/bin/bash
-#SBATCH --account=rrg-czg
+# Submit from the repo root: sbatch scripts/submit_orbit_daily_l2.sh
+#SBATCH --account=def-yourPI          # ← change to your PI's allocation account
 #SBATCH --job-name=orbit_daily_l2
 #SBATCH --time=60:00:00
 #SBATCH --nodes=1
@@ -32,7 +33,8 @@
 # shaving walltime, now that we have real evidence 8G/core wasn't enough
 # margin under peak load.
 #
-# process_day() also now uses max_tasks_per_child=1 (each worker is
+# The orbit-track real_files dispatch also uses max_tasks_per_child=1 when
+# run_l2 is set (see cesm_hawc.dispatch / cesm_hawc.cli) -- each worker is
 # recycled after one day, capping any cross-day memory accumulation within
 # a single long-lived worker process) as a complementary safeguard --
 # doesn't hurt regardless of whether the OOM was from a single-day spike,
@@ -67,7 +69,7 @@ echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Workers requested: 50 (cpus-per-task) -- confirm config.toml's n_workers matches"
 
-cd /project/6079534/vmcd/cesm-hawc/scripts
-python run_orbit_daily.py
+cd "$SLURM_SUBMIT_DIR"
+cesm-hawc run --config config.toml --mode orbit-track
 
 echo "Job finished: $(date)"

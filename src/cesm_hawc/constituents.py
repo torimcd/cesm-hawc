@@ -44,7 +44,7 @@ deviation, sigma_g) for each MAM4 mode:
 This is distinct from ``aliprocessing.l2.optical.aerosol_median_radius_db()``,
 which is still used for phase-function matching in ``ExtinctionScatterer``,
 but which bakes in a single fixed mode_width=1.6 for its extinction
-calculation -- not correct for either MAM4 mode. Using the mode-matched
+calculation, which is correct for accumulation mde but not coarse mode. Using the mode-matched
 databases here ensures the extinction magnitude reflects the actual size
 distribution width of each mode, since sasktran2 builds xs_total as a
 distribution-weighted sum over per-particle Mie cross-sections

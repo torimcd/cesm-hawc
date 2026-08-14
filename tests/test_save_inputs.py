@@ -50,7 +50,7 @@ def test_save_column_inputs_with_constituents(tmp_path, synthetic_waccm_file):
 
     ds = xr.open_dataset(out_path)
     assert bool(ds.attrs["includes_constituents"])
-    assert ds.attrs["mode_width_accum"] == 1.8
+    assert ds.attrs["mode_width_accum"] == 1.6
     assert ds.attrs["mode_width_coarse"] == 1.2
     assert ds.attrs["mie_refractive_index"] == "H2SO4"
     np.testing.assert_array_equal(ds["wavelength_nm"].values, wavelengths_nm)

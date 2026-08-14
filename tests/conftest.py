@@ -33,7 +33,7 @@ def load_profiles_dict(nc_path) -> dict:
     profiles = {"altitudes_m": ds["altitude_m"].values}
     for name, da in ds.data_vars.items():
         profiles[name] = da.values
-    profiles["sulfate_a1_sigma"] = float(ds.attrs.get("sigma_a1", 1.8))
+    profiles["sulfate_a1_sigma"] = float(ds.attrs.get("sigma_a1", 1.6))
     profiles["sulfate_a3_sigma"] = float(ds.attrs.get("sigma_a3", 1.2))
     ds.close()
     return profiles

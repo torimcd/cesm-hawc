@@ -89,7 +89,7 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         "latitude": float(lat),
         "longitude": float(lon),
         "time_index": int(time_index),
-        "sigma_a1": profiles.get("sulfate_a1_sigma", 1.8),
+        "sigma_a1": profiles.get("sulfate_a1_sigma", 1.6),
         "sigma_a3": profiles.get("sulfate_a3_sigma", 1.2),
         "description": "WACCM column profile + simulator constituents input from cesm-hawc",
     }

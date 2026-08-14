@@ -38,7 +38,7 @@ median radius using ``xs_total`` (total cross section, [m^2]) from a
 sasktran2 MieDatabase built with the CORRECT mode_width (geometric standard
 deviation, sigma_g) for each MAM4 mode:
 
-    - aerosol_accum  (so4_a1, sigma_g = 1.8)
+    - aerosol_accum  (so4_a1, sigma_g = 1.6)
     - aerosol_coarse (so4_a3, sigma_g = 1.2)
 
 This is distinct from ``aliprocessing.l2.optical.aerosol_median_radius_db()``,
@@ -66,8 +66,10 @@ except ImportError as e:
 
 # ── Mode-specific Mie databases ─────────────────────────────────────────────
 # Previously this module used aliprocessing.l2.optical.aerosol_median_radius_db(),
-# a single shared database built with a fixed mode_width=1.6 -- not correct
-# for either WACCM MAM4 mode (sigma_g = 1.8 accumulation, 1.2 coarse).
+# a single shared database built with a fixed mode_width=1.6 -- correct for
+# the accumulation mode (sigma_g = 1.6) only by coincidence, and not correct
+# for the coarse mode (sigma_g = 1.2). Still built explicitly per mode below
+# rather than relying on that coincidence, since it doesn't hold for coarse.
 #
 # ExtinctionScatterer derives its behavior ENTIRELY from whatever
 # optical_property object it's given (see
@@ -85,7 +87,7 @@ except ImportError as e:
 # structure: xs_total, p11, p12, p33, lm_a1-b2, etc.) -- just with the
 # correct mode_width per mode -- so they're drop-in compatible as
 # ExtinctionScatterer's optical_property argument.
-_MODE_WIDTHS = {"aerosol_accum": 1.8, "aerosol_coarse": 1.2}
+_MODE_WIDTHS = {"aerosol_accum": 1.6, "aerosol_coarse": 1.2}
 _WAVELENGTHS_NM = np.array([470, 525, 745, 1020, 1230, 1450, 1500])
 _MEDIAN_RADIUS_NM = np.arange(10, 600, 10.0)
 
@@ -129,7 +131,7 @@ def get_mode_mie_database(mode_width: float):
     ``sk.constituent.ExtinctionScatterer`` themselves from a saved column's
     ``{name}_reference_extinction_per_m``/``{name}_median_radius_nm`` fields
     (see ``cesm_hawc.save_inputs``) rather than calling
-    ``build_waccm_constituents()``. ``mode_width`` is 1.8 for the
+    ``build_waccm_constituents()``. ``mode_width`` is 1.6 for the
     accumulation mode, 1.2 for the coarse mode (see ``_MODE_WIDTHS``).
     """
     return _get_mode_db(mode_width)
@@ -246,7 +248,7 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
     Mie database (not a shared, mismatched one) for both extinction
     magnitude AND phase function / wavelength scaling:
 
-    - ``aerosol_accum``  (so4_a1, sigma_g = 1.8): fresh SO2 injection signal
+    - ``aerosol_accum``  (so4_a1, sigma_g = 1.6): fresh SO2 injection signal
     - ``aerosol_coarse`` (so4_a3, sigma_g = 1.2): aged sulfate, dominates ALI
       extinction after ~2 weeks post-injection
     """

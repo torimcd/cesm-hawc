@@ -16,7 +16,7 @@ variables must be present in the h0 file (add to fincl in user_nl_cam):
 
 MAM4 mode sigma_g values (WACCM/BWSSP245)
 ------------------------------------------
-    Accumulation (_a1): sigma_g = 1.8
+    Accumulation (_a1): sigma_g = 1.6   (Mills et al. 2016)
     Coarse (_a3):       sigma_g = 1.2   ← WACCM-specific (Mills et al. 2016)
 """
 
@@ -40,7 +40,7 @@ M_H2O = 0.018015      # kg mol⁻¹    molar mass of water
 RHO_SULFATE = 1600.0
 
 # MAM4 modal sigma_g values for WACCM/BWSSP245
-MAM4_SIGMA = {"a1": 1.8, "a2": 1.6, "a3": 1.2}
+MAM4_SIGMA = {"a1": 1.6, "a2": 1.6, "a3": 1.2}
 
 
 # ── Atmospheric physics helpers ────────────────────────────────────────────
@@ -254,7 +254,7 @@ class WACCMAtmosphere:
         n_air_cm3           [cm⁻³]   air number density
         sulfate_a1_N_cm3    [cm⁻³]   accumulation mode number
         sulfate_a1_r_um     [μm]     accumulation mode median radius
-        sulfate_a1_sigma    float    1.8 (scalar)
+        sulfate_a1_sigma    float    1.6 (scalar)
         sulfate_a3_N_cm3    [cm⁻³]   coarse mode number  ← ALI primary signal
         sulfate_a3_r_um     [μm]     coarse mode median radius
         sulfate_a3_sigma    float    1.2 (scalar, WACCM-specific)
@@ -473,7 +473,7 @@ class WACCMAtmosphere:
                 "latitude":    float(lat),
                 "longitude":   float(lon),
                 "time_index":  int(time_index),
-                "sigma_a1":    scalars.get("sulfate_a1_sigma", 1.8),
+                "sigma_a1":    scalars.get("sulfate_a1_sigma", 1.6),
                 "sigma_a3":    scalars.get("sulfate_a3_sigma", 1.2),
                 "description": "WACCM column profiles from cesm-hawc",
             }

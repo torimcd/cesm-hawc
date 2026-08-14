@@ -42,6 +42,15 @@ RHO_SULFATE = 1600.0
 # MAM4 modal sigma_g values for WACCM/BWSSP245
 MAM4_SIGMA = {"a1": 1.6, "a2": 1.6, "a3": 1.2}
 
+# REQUIRED_VARS: WACCMAtmosphere.__init__ raises ValueError without these.
+# SCIENCE_CRITICAL_VARS: NOT enforced by WACCMAtmosphere itself; missing
+#   ones are silently zeroed by sulfate_mode()/chem_vmr() and only trigger a
+#   warnings.warn().
+# RECOMMENDED_VARS: the full set _check_required_vars() warns on if missing\
+REQUIRED_VARS = {"T", "Q", "PS", "hyam", "hybm"}
+SCIENCE_CRITICAL_VARS = ["O3", "so4_a1", "so4_a3", "num_a1", "num_a3"]
+RECOMMENDED_VARS = ["NO2", "H2O", "SO2"] + SCIENCE_CRITICAL_VARS
+
 
 # ── Atmospheric physics helpers ────────────────────────────────────────────
 
@@ -193,12 +202,10 @@ class WACCMAtmosphere:
 
     def _check_required_vars(self):
         have = set(self.ds.data_vars) | set(self.ds.coords)
-        required = {"T", "Q", "PS", "hyam", "hybm"}
-        missing  = required - have
+        missing = REQUIRED_VARS - have
         if missing:
             raise ValueError(f"Missing required WACCM variables: {missing}")
-        for v in ["O3", "NO2", "H2O", "SO2", "so4_a1", "so4_a3",
-                  "num_a1", "num_a3"]:
+        for v in RECOMMENDED_VARS:
             if v not in have:
                 warnings.warn(f"'{v}' not in file — add to fincl in user_nl_cam.")
 

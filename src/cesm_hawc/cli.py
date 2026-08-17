@@ -107,8 +107,9 @@ def _save_inputs_month(date: str, bg_path: str, inj_path: str | None,
         return f"FAIL {date}"
 
 
-def _save_inputs_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run,
-                        profiles_only=False) -> None:
+def _save_inputs_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+                        case_name_override, dry_run, profiles_only=False) -> None:
+    del case_name_override  # not applicable to batch mode
     from cesm_hawc import file_index
     from cesm_hawc.dispatch import run_jobs
 
@@ -169,8 +170,8 @@ def _save_inputs_orbit_track_real_files_day(date_str: str, observations: list[di
         return f"FAIL {date_str}"
 
 
-def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run,
-                              profiles_only=False) -> None:
+def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+                              case_name_override, dry_run, profiles_only=False) -> None:
     from cesm_hawc.dispatch import run_jobs
 
     if cfg.orbit is None:
@@ -178,10 +179,12 @@ def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_ov
     o, ins = cfg.orbit, cfg.instrument
     out_dir = out_dir_override or o.out_dir
     n_workers = n_workers_override or o.n_workers
+    case_name = case_name_override or o.case_name
     alt_grid_m = ins.altitude_grid_m()
     wavelengths_nm = np.array(ins.wavelengths_nm)
 
-    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2=False)
+    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2=False,
+                                                   case_name=case_name)
     jobs = [(date, obs, case_name, h2_path, out_dir, alt_grid_m, wavelengths_nm, profiles_only)
             for date, obs, case_name, h2_path, _, _, _ in raw_jobs]
     worker_fn = _save_inputs_orbit_track_real_files_day
@@ -197,8 +200,9 @@ def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_ov
     _report(results, "days")
 
 
-def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
-    """One CESM case (``o.case_name``) at a time -- the day-loop is anchored
+def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool, case_name: str):
+    """One CESM case (``case_name``, normally ``o.case_name`` but overridable
+    by callers -- see ``--case-name``) at a time -- the day-loop is anchored
     to that case's own available h2 dates, not a separate reference case."""
     from cesm_hawc import file_index, orbit_files
 
@@ -209,7 +213,7 @@ def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
     n_orbit_days = max(day_idx.keys()) + 1
 
     h2_index = file_index.index_by_date(
-        os.path.join(o.waccm_data_dir, o.case_name, "atm", "hist"), o.h2_pattern
+        os.path.join(o.waccm_data_dir, case_name, "atm", "hist"), o.h2_pattern
     )
     case_dates = sorted(h2_index.keys())
 
@@ -230,7 +234,7 @@ def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
         if not obs:
             continue
 
-        jobs.append((date_str, obs, o.case_name, h2_index[date_str], out_dir, alt_grid_m, run_l2))
+        jobs.append((date_str, obs, case_name, h2_index[date_str], out_dir, alt_grid_m, run_l2))
     return jobs
 
 
@@ -295,8 +299,9 @@ def _build_orbit_file_jobs(orb, out_dir):
     return jobs
 
 
-def _save_inputs_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run,
-                                 profiles_only=False) -> None:
+def _save_inputs_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+                                 case_name_override, dry_run, profiles_only=False) -> None:
+    del case_name_override  # not applicable to orbit-file mode
     from cesm_hawc.dispatch import run_jobs
 
     if cfg.orbit_real is None:
@@ -467,7 +472,9 @@ def _run_month(date: str, bg_path: str, inj_path: str | None, out_root: str,
         return f"FAIL {date}"
 
 
-def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run) -> None:
+def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+               case_name_override, dry_run) -> None:
+    del case_name_override  # not applicable to batch mode
     from cesm_hawc import file_index
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.constituents import warm_mode_databases
@@ -670,7 +677,8 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
         return f"FAIL {sim_date_str}  {case_name}"
 
 
-def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run) -> None:
+def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+                      case_name_override, dry_run) -> None:
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.constituents import warm_mode_databases
     from cesm_hawc.dispatch import run_jobs
@@ -681,13 +689,14 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override, 
     o, ins = cfg.orbit, cfg.instrument
     out_dir = out_dir_override or o.out_dir
     n_workers = n_workers_override or o.n_workers
+    case_name = case_name_override or o.case_name
     alt_grid_m = ins.altitude_grid_m()
     wavelengths_nm = np.array(ins.wavelengths_nm)
 
     if o.run_l2:
         log.warning("run_l2 is enabled: L2 retrieval is slow (100-600s/profile measured "
                     "in the original benchmarking). Confirm your walltime/CPU-hour budget.")
-    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2)
+    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=case_name)
     jobs = []
     n_skipped = 0
     for date_str, obs, case_name, h2_path, _, _, run_l2 in raw_jobs:
@@ -802,7 +811,9 @@ def _run_orbit_file(orbit_path: str, h2_bg_path: str, h2_inj_path: str | None,
         return f"FAIL {orbit_name}"
 
 
-def _run_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run) -> None:
+def _run_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
+                         case_name_override, dry_run) -> None:
+    del case_name_override  # not applicable to orbit-file mode
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.dispatch import run_jobs
 
@@ -862,14 +873,14 @@ def _report(results: list[str], unit: str) -> None:
 
 
 _SAVE_INPUTS_DISPATCH = {
-    "single": lambda cfg, out, workers, dry, profiles_only: _save_inputs_single(
+    "single": lambda cfg, out, workers, case_name, dry, profiles_only: _save_inputs_single(
         cfg, out, dry, profiles_only),
     "batch": _save_inputs_batch,
     "orbit-track": _save_inputs_orbit_track,
     "orbit-file": _save_inputs_orbit_file_cmd,
 }
 _RUN_DISPATCH = {
-    "single": lambda cfg, out, workers, dry: _run_single(cfg, out, dry),
+    "single": lambda cfg, out, workers, case_name, dry: _run_single(cfg, out, dry),
     "batch": _run_batch,
     "orbit-track": _run_orbit_track,
     "orbit-file": _run_orbit_file_cmd,
@@ -890,6 +901,9 @@ def build_parser() -> argparse.ArgumentParser:
                          choices=["single", "batch", "orbit-track", "orbit-file"])
         sp.add_argument("--out-dir", default=None, help="Override config's out_dir")
         sp.add_argument("--n-workers", type=int, default=None, help="Override config's n_workers")
+        sp.add_argument("--case-name", default=None,
+                         help="Override [orbit]'s case_name (orbit-track mode only) -- lets one "
+                              "config.toml be reused across multiple CESM cases without editing it")
         sp.add_argument("--dry-run", action="store_true",
                          help="Print the job count without running anything")
 
@@ -927,11 +941,11 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(str(e))
 
     if args.command == "save-inputs":
-        _SAVE_INPUTS_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.dry_run,
-                                          args.profiles_only)
+        _SAVE_INPUTS_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.case_name,
+                                          args.dry_run, args.profiles_only)
     elif args.command == "run":
         _require_sim_deps()
-        _RUN_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.dry_run)
+        _RUN_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.case_name, args.dry_run)
 
 
 if __name__ == "__main__":

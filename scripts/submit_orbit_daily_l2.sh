@@ -1,5 +1,15 @@
 #!/bin/bash
-# Submit from the repo root: sbatch scripts/submit_orbit_daily_l2.sh
+# Submit from the repo root:
+#   sbatch scripts/submit_orbit_daily_l2.sh [config.toml] [case_name]
+#
+# config.toml defaults to "config.toml" in the submit directory if omitted.
+# case_name, if given, overrides [orbit]'s case_name via --case-name --
+# lets you queue one job per case (background + each injection magnitude)
+# off a single shared config.toml instead of maintaining a separate config
+# file per case:
+#   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_background_2030_001
+#   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_1.0Tg_2030_001
+#   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_0.1Tg_2030_001
 #SBATCH --account=def-yourPI          # ← change to your PI's allocation account
 #SBATCH --job-name=orbit_daily_l2
 #SBATCH --time=60:00:00
@@ -60,6 +70,9 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
+CONFIG="${1:-config.toml}"
+CASE_NAME="${2:-}"
+
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate hawc_env
 unset PYTHONPATH
@@ -67,9 +80,15 @@ unset PYTHONPATH
 echo "Job started: $(date)"
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
+echo "Config: $CONFIG"
+echo "Case name override: ${CASE_NAME:-<none -- using the configured case_name>}"
 echo "Workers requested: 50 (cpus-per-task) -- confirm config.toml's n_workers matches"
 
 cd "$SLURM_SUBMIT_DIR"
-cesm-hawc run --config config.toml --mode orbit-track
+if [ -n "$CASE_NAME" ]; then
+    cesm-hawc run --config "$CONFIG" --mode orbit-track --case-name "$CASE_NAME"
+else
+    cesm-hawc run --config "$CONFIG" --mode orbit-track
+fi
 
 echo "Job finished: $(date)"

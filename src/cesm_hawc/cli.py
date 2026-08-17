@@ -406,10 +406,14 @@ def _save_cesm_extinction(waccm_obj, lat, lon, time_index, alt_grid_m, out_dir, 
 def _run_month(date: str, bg_path: str, inj_path: str | None, out_root: str,
                lat: float, lon: float, sza_deg: float, saa_deg: float,
                alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray) -> str:
+    from cesm_hawc.env import configure_environment
     from cesm_hawc.noise import default_noise_model
     from cesm_hawc.outputs import format_anomaly_summary, format_burden_summary, write_text_summary
     from cesm_hawc.simulation import DEFAULT_PRODUCTS, run_ali_simulation_from_profiles
     from cesm_hawc.waccm import WACCMAtmosphere
+
+    # See the matching comment in _run_orbit_daily_case_day.
+    configure_environment()
 
     try:
         sim_geometry = {
@@ -544,10 +548,17 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
 
     from cesm_hawc.constituents import build_waccm_constituents
     from cesm_hawc.convergence import extract_l2_native_diagnostics, parse_scipy_convergence
+    from cesm_hawc.env import configure_environment
     from cesm_hawc.noise import default_noise_model
     from cesm_hawc.orbit_files import l1b_image_to_dataset
     from cesm_hawc.resume import append_csv_row, load_completed_keys
     from cesm_hawc.waccm import WACCMAtmosphere
+
+    # Re-applies the calibration-database race patch inside this worker
+    # process -- configure_environment() in the main process (see cli.main())
+    # isn't guaranteed to reach worker processes depending on the
+    # multiprocessing start method. Idempotent, cheap to call again.
+    configure_environment()
 
     try:
         from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
@@ -739,8 +750,12 @@ def _run_orbit_file(orbit_path: str, h2_bg_path: str, h2_inj_path: str | None,
     import xarray as xr
 
     from cesm_hawc.constituents import build_waccm_constituents
+    from cesm_hawc.env import configure_environment
     from cesm_hawc.noise import default_noise_model
     from cesm_hawc.waccm import WACCMAtmosphere
+
+    # See the matching comment in _run_orbit_daily_case_day.
+    configure_environment()
 
     orbit_name = os.path.splitext(os.path.basename(orbit_path))[0]
     try:

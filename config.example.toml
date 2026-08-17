@@ -33,50 +33,29 @@ sza_deg     = 60.0
 saa_deg     = 0.0
 
 # ── Orbit-track runs (--mode orbit-track) ──────────────────────────────────
-# track_source = "analytical": an analytical sun-synchronous ground track
-#   matched to a directory of hourly h1 files by nearest timestamp.
-# track_source = "real_files": a real HAWC orbit-track file set matched to
-#   daily h2 files by day-of-year offset from orbit_epoch, with optional
-#   multi-case injection runs and full L2 retrieval.
+# A real HAWC orbit-track file set matched to one CESM case's daily h2
+# files by day-of-year offset from orbit_epoch, with optional full L2
+# retrieval. One case per run -- output lands under
+# out_dir/<case_name>/<date>/. To process multiple cases (background +
+# several injection magnitudes), run this mode once per case, each with
+# its own case_name.
 [orbit]
-track_source = "analytical"
+orbit_dir      = "/path/to/orbit/files/"
+orbit_pattern  = "orbit_*.nc"
+orbit_epoch    = "2019-08-01"   # orbit file set's own time origin
+center_pixel   = 256            # across-track index used as tangent point
+
+waccm_data_dir = "/path/to/cesm/output/archive/"   # root containing <casename>/atm/hist/
+h2_pattern     = "*.cam.h2.*.nc"
+case_name      = "sai_background_2035_001"         # the one CESM case this run processes
+
+obs_cadence_s  = 60.0     # seconds between simulated observations
+run_start_date = ""       # optional date-range restriction, "" = all
+run_end_date   = ""
+run_l2         = false    # true = also run full L2 retrieval (slow)
 
 out_dir   = "~/results/hawc_ali_orbit/"
 n_workers = 4          # parallel worker processes (by day); 1 = serial
-
-# -- analytical --
-waccm_background_dir = "/path/to/background/atm/hist/"
-waccm_injection_dir  = ""              # leave empty ("") to skip injection run
-file_pattern         = "*.cam.h1.*.nc"
-
-# Simulation time range (ISO-8601). Leave empty to use all available files.
-start_time = ""    # e.g. "2035-01-01T00:00:00Z"
-end_time   = ""    # e.g. "2035-06-30T23:00:00Z"
-
-# Analytical sun-synchronous orbit parameters (placeholder — swap in TLE later)
-altitude_km     = 600.0   # orbit altitude [km]
-inclination_deg = 98.0    # ~98° = sun-synchronous; adjust to match real orbit
-start_lon_deg   = 0.0     # equator-crossing longitude at start_time [degrees]
-
-obs_cadence_s = 60.0      # seconds between simulated observations
-
-# Maximum allowed gap between an orbit timestamp and the nearest file [s].
-# Observations with no file within this tolerance are skipped.
-max_gap_s = 1800.0    # 30 min
-
-# -- real_files (used only when track_source = "real_files") --
-# orbit_dir             = "/path/to/orbit/files/"
-# orbit_pattern         = "orbit_*.nc"
-# orbit_epoch           = "2019-08-01"   # orbit file set's own time origin
-# center_pixel          = 256            # across-track index used as tangent point
-# waccm_data_dir        = "/path/to/cesm/output/archive/"   # root containing <casename>/atm/hist/
-# h2_pattern             = "*.cam.h2.*.nc"
-# sim_start              = "2035-01-01"  # first simulation date, maps to orbit day 0
-# background_case        = "sai_background_2035_001"
-# injection_cases        = ["sai_1.0Tg_2035_001", "sai_0.1Tg_2035_001"]
-# run_start_date         = ""            # optional date-range restriction, "" = all
-# run_end_date           = ""
-# run_l2                 = false         # true = also run full L2 retrieval (slow)
 
 # ── Per-orbit-file, per-pixel runs (--mode orbit-file) ─────────────────────
 [orbit_real]

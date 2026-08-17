@@ -90,7 +90,7 @@ cesm-hawc run --config config.toml --mode single
 |------|-------|-----------------|
 | `single` | one column, one file | `[single]` + `[geometry]` |
 | `batch` | a directory of monthly h0 files | `[batch]` + `[geometry]` |
-| `orbit-track` | an orbit ground track (analytical or real orbit files) matched to hourly/daily files | `[orbit]` |
+| `orbit-track` | a real orbit ground track matched to one CESM case's daily h2 files | `[orbit]` |
 | `orbit-file` | real per-orbit-file, per-pixel observations matched to daily h2 files | `[orbit_real]` |
 
 Add `--dry-run` to see the job count without running anything, `--n-workers N`

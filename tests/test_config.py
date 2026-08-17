@@ -47,8 +47,8 @@ def test_optional_tables_are_none_when_absent(tmp_path):
     assert cfg.instrument.wavelengths_nm == [470.0, 745.0]
 
 
-def test_orbit_track_source_validation(tmp_path):
+def test_orbit_missing_required_key_raises(tmp_path):
     path = tmp_path / "bad_orbit.toml"
-    path.write_text('[orbit]\ntrack_source = "bogus"\nout_dir = "~/out"\n')
+    path.write_text('[orbit]\nout_dir = "~/out"\n')  # missing orbit_dir/waccm_data_dir/case_name
     with pytest.raises(ConfigError):
         load_config(path)

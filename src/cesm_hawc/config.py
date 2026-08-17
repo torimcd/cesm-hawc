@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 try:
     import tomllib
@@ -89,77 +89,40 @@ class BatchConfig:
 
 @dataclass(frozen=True)
 class OrbitConfig:
-    """``[orbit]`` — orbit-track runs (``cesm-hawc run --mode orbit-track``).
-
-    ``track_source`` selects which field group applies:
-
-    - ``"analytical"``: an analytical sun-synchronous ground track matched
-      to a directory of hourly h1 files by nearest timestamp.
-    - ``"real_files"``: a real HAWC orbit-track file set matched to daily
-      h2 files by day-of-year offset from ``orbit_epoch``, optionally
-      running multiple injection cases and/or full L2 retrieval.
+    """``[orbit]`` — orbit-track runs (``cesm-hawc run --mode orbit-track``):
+    a real HAWC orbit-track file set matched to one CESM case's daily h2
+    files by day-of-year offset from ``orbit_epoch``, optionally with full
+    L2 retrieval. One case per run (``case_name``) -- run it once per case
+    (background or injection) you need output for.
     """
-    track_source: Literal["analytical", "real_files"]
     out_dir: str
     n_workers: int
+    orbit_dir: str
+    waccm_data_dir: str
+    case_name: str
 
-    # -- analytical --
-    waccm_background_dir: str | None = None
-    waccm_injection_dir: str | None = None
-    file_pattern: str | None = None
-    start_time: str | None = None
-    end_time: str | None = None
-    altitude_km: float = 600.0
-    inclination_deg: float = 98.0
-    start_lon_deg: float = 0.0
-    obs_cadence_s: float = 60.0
-    max_gap_s: float = 1800.0
-
-    # -- real_files --
-    orbit_dir: str | None = None
     orbit_pattern: str = "orbit_*.nc"
     orbit_epoch: str = "2019-08-01"
     center_pixel: int = 256
-    waccm_data_dir: str | None = None
     h2_pattern: str = "*.cam.h2.*.nc"
-    sim_start: str | None = None
-    background_case: str | None = None
-    injection_cases: list[str] = field(default_factory=list)
+    obs_cadence_s: float = 60.0
     run_start_date: str | None = None
     run_end_date: str | None = None
     run_l2: bool = False
 
     @classmethod
     def from_toml_dict(cls, d: dict) -> "OrbitConfig":
-        track_source = d.get("track_source", "analytical")
-        if track_source not in ("analytical", "real_files"):
-            raise ConfigError(
-                f"[orbit] track_source must be 'analytical' or 'real_files', "
-                f"got {track_source!r}"
-            )
         return cls(
-            track_source=track_source,
             out_dir=_expand(_require(d, "out_dir", "orbit")),
             n_workers=int(d.get("n_workers", 1)),
-            waccm_background_dir=_expand(d.get("waccm_background_dir")),
-            waccm_injection_dir=_expand(d.get("waccm_injection_dir")) or None,
-            file_pattern=d.get("file_pattern"),
-            start_time=d.get("start_time") or None,
-            end_time=d.get("end_time") or None,
-            altitude_km=float(d.get("altitude_km", 600.0)),
-            inclination_deg=float(d.get("inclination_deg", 98.0)),
-            start_lon_deg=float(d.get("start_lon_deg", 0.0)),
-            obs_cadence_s=float(d.get("obs_cadence_s", 60.0)),
-            max_gap_s=float(d.get("max_gap_s", 1800.0)),
-            orbit_dir=_expand(d.get("orbit_dir")),
+            orbit_dir=_expand(_require(d, "orbit_dir", "orbit")),
+            waccm_data_dir=_expand(_require(d, "waccm_data_dir", "orbit")),
+            case_name=_require(d, "case_name", "orbit"),
             orbit_pattern=d.get("orbit_pattern", "orbit_*.nc"),
             orbit_epoch=d.get("orbit_epoch", "2019-08-01"),
             center_pixel=int(d.get("center_pixel", 256)),
-            waccm_data_dir=_expand(d.get("waccm_data_dir")),
             h2_pattern=d.get("h2_pattern", "*.cam.h2.*.nc"),
-            sim_start=d.get("sim_start") or None,
-            background_case=d.get("background_case") or None,
-            injection_cases=list(d.get("injection_cases", [])),
+            obs_cadence_s=float(d.get("obs_cadence_s", 60.0)),
             run_start_date=d.get("run_start_date") or None,
             run_end_date=d.get("run_end_date") or None,
             run_l2=bool(d.get("run_l2", False)),

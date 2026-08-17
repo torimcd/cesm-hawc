@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import sys
 import traceback
 
@@ -144,72 +143,27 @@ def _save_inputs_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override
 # save-inputs: orbit-track
 # ---------------------------------------------------------------------------
 
-def _save_inputs_orbit_track_day(date_str: str, day_obs: list[dict],
-                                  out_root: str, alt_grid_m: np.ndarray,
-                                  wavelengths_nm: np.ndarray, profiles_only: bool = False) -> str:
-    """``day_obs`` items: {time, lat, lon, bg_file, inj_file}."""
-    from cesm_hawc.save_inputs import save_column_inputs
-    from cesm_hawc.waccm import WACCMAtmosphere
-
-    try:
-        day_out = os.path.join(out_root, date_str)
-        os.makedirs(day_out, exist_ok=True)
-        waccm_cache: dict[str, WACCMAtmosphere] = {}
-
-        def get_waccm(path: str) -> WACCMAtmosphere:
-            if path not in waccm_cache:
-                waccm_cache[path] = WACCMAtmosphere(path, alt_grid_km=alt_grid_m / 1e3)
-            return waccm_cache[path]
-
-        for i, obs in enumerate(day_obs):
-            t_str = pd.Timestamp(obs["time"]).strftime("%H%M%S")
-            save_column_inputs(
-                get_waccm(obs["bg_file"]), obs["lat"], obs["lon"],
-                os.path.join(day_out, f"background_{t_str}.nc"), 0,
-                alt_grid_m, wavelengths_nm, profiles_only,
-            )
-            if obs.get("inj_file"):
-                save_column_inputs(
-                    get_waccm(obs["inj_file"]), obs["lat"], obs["lon"],
-                    os.path.join(day_out, f"injection_{t_str}.nc"), 0,
-                    alt_grid_m, wavelengths_nm, profiles_only,
-                )
-        return f"OK   {date_str}  ({len(day_obs)} obs)"
-    except Exception:
-        log.error("[%s] FAILED:\n%s", date_str, traceback.format_exc())
-        return f"FAIL {date_str}"
-
-
 def _save_inputs_orbit_track_real_files_day(date_str: str, observations: list[dict],
-                                             h2_files: dict[str, str], out_root: str,
+                                             case_name: str, h2_path: str, out_root: str,
                                              alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray,
                                              profiles_only: bool = False) -> str:
-    """``h2_files`` maps a case label (e.g. "background", "sai_1.0Tg") to
-    that case's single h2 file for this date — shared across every
-    observation in ``observations``, unlike the analytical mode's
-    per-observation ``bg_file``/``inj_file``."""
+    """One CESM case, one day: save every observation's simulator-ready
+    input column to ``out_root/case_name/date_str/column_<time>.nc``."""
     from cesm_hawc.save_inputs import save_column_inputs
     from cesm_hawc.waccm import WACCMAtmosphere
 
     try:
-        waccm_cache: dict[str, WACCMAtmosphere] = {}
-
-        def get_waccm(path: str) -> WACCMAtmosphere:
-            if path not in waccm_cache:
-                waccm_cache[path] = WACCMAtmosphere(path, alt_grid_km=alt_grid_m / 1e3)
-            return waccm_cache[path]
-
+        waccm = WACCMAtmosphere(h2_path, alt_grid_km=alt_grid_m / 1e3)
+        case_out = os.path.join(out_root, case_name, date_str)
+        os.makedirs(case_out, exist_ok=True)
         for obs in observations:
             t_str = pd.Timestamp(obs["time"]).strftime("%H%M%S")
-            for label, h2_path in h2_files.items():
-                case_out = os.path.join(out_root, label, date_str)
-                os.makedirs(case_out, exist_ok=True)
-                save_column_inputs(
-                    get_waccm(h2_path), obs["lat"], obs["lon"],
-                    os.path.join(case_out, f"column_{t_str}.nc"), 0,
-                    alt_grid_m, wavelengths_nm, profiles_only,
-                )
-        return f"OK   {date_str}  ({len(observations)} obs, {len(h2_files)} case(s))"
+            save_column_inputs(
+                waccm, obs["lat"], obs["lon"],
+                os.path.join(case_out, f"column_{t_str}.nc"), 0,
+                alt_grid_m, wavelengths_nm, profiles_only,
+            )
+        return f"OK   {date_str}  ({len(observations)} obs, case {case_name})"
     except Exception:
         log.error("[%s] FAILED:\n%s", date_str, traceback.format_exc())
         return f"FAIL {date_str}"
@@ -227,16 +181,10 @@ def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_ov
     alt_grid_m = ins.altitude_grid_m()
     wavelengths_nm = np.array(ins.wavelengths_nm)
 
-    if o.track_source == "analytical":
-        raw_jobs = _build_orbit_track_analytical_jobs(o, out_dir, alt_grid_m)
-        jobs = [(date, obs, out_dir, alt_grid_m, wavelengths_nm, profiles_only)
-                for date, obs, _, _ in raw_jobs]
-        worker_fn = _save_inputs_orbit_track_day
-    else:
-        raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2=False)
-        jobs = [(date, obs, h2_files, out_dir, alt_grid_m, wavelengths_nm, profiles_only)
-                for date, obs, h2_files, _, _, _ in raw_jobs]
-        worker_fn = _save_inputs_orbit_track_real_files_day
+    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2=False)
+    jobs = [(date, obs, case_name, h2_path, out_dir, alt_grid_m, wavelengths_nm, profiles_only)
+            for date, obs, case_name, h2_path, _, _, _ in raw_jobs]
+    worker_fn = _save_inputs_orbit_track_real_files_day
 
     if dry_run:
         log.info("[dry-run] would save inputs for %d day(s) to %s", len(jobs), out_dir)
@@ -249,46 +197,9 @@ def _save_inputs_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_ov
     _report(results, "days")
 
 
-def _build_orbit_track_analytical_jobs(o, out_dir, alt_grid_m):
-    from cesm_hawc import file_index, orbit as orbit_mod
-
-    bg_index = file_index.index_by_timestamp(o.waccm_background_dir, o.file_pattern)
-    inj_index = (file_index.index_by_timestamp(o.waccm_injection_dir, o.file_pattern)
-                 if o.waccm_injection_dir else {})
-    sorted_bg_ts = sorted(bg_index.keys())
-
-    start_time = pd.Timestamp(o.start_time) if o.start_time else sorted_bg_ts[0]
-    end_time = pd.Timestamp(o.end_time) if o.end_time else sorted_bg_ts[-1]
-
-    track = orbit_mod.generate_sso_ground_track(
-        start_time, end_time, o.obs_cadence_s, o.altitude_km, o.inclination_deg, o.start_lon_deg
-    )
-    track["bg_file"] = track["time"].apply(
-        lambda t: file_index.find_nearest(t, bg_index, o.max_gap_s)
-    )
-    track["inj_file"] = (
-        track["time"].apply(lambda t: file_index.find_nearest(t, inj_index, o.max_gap_s))
-        if inj_index else None
-    )
-    track = track.dropna(subset=["bg_file"]).reset_index(drop=True)
-    track["_date"] = track["time"].dt.strftime("%Y-%m-%d")
-
-    jobs = []
-    for date_str, day_df in track.groupby("_date"):
-        day_obs = day_df.drop(columns="_date").to_dict(orient="records")
-        jobs.append((date_str, day_obs, out_dir, alt_grid_m))
-    return jobs
-
-
-def _case_labels(background_case: str, injection_cases: list[str]) -> dict[str, str]:
-    labels = {"background": background_case}
-    for c in injection_cases:
-        m = re.match(r"(sai_[\d.]+Tg)", c)
-        labels[m.group(1) if m else c] = c
-    return labels
-
-
 def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
+    """One CESM case (``o.case_name``) at a time -- the day-loop is anchored
+    to that case's own available h2 dates, not a separate reference case."""
     from cesm_hawc import file_index, orbit_files
 
     orbit_paths = orbit_files.load_orbit_files(o.orbit_dir, o.orbit_pattern)
@@ -297,17 +208,13 @@ def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
     day_idx = orbit_files.build_orbit_day_index(orbit_paths, epoch, cache_path=cache_path)
     n_orbit_days = max(day_idx.keys()) + 1
 
-    case_labels = _case_labels(o.background_case, o.injection_cases)
-    h2_indices = {
-        label: file_index.index_by_date(
-            os.path.join(o.waccm_data_dir, case, "atm", "hist"), o.h2_pattern
-        )
-        for label, case in case_labels.items()
-    }
-    bg_dates = sorted(h2_indices["background"].keys())
+    h2_index = file_index.index_by_date(
+        os.path.join(o.waccm_data_dir, o.case_name, "atm", "hist"), o.h2_pattern
+    )
+    case_dates = sorted(h2_index.keys())
 
     jobs = []
-    for i, date_str in enumerate(bg_dates):
+    for i, date_str in enumerate(case_dates):
         if o.run_start_date and date_str < o.run_start_date:
             continue
         if o.run_end_date and date_str > o.run_end_date:
@@ -323,11 +230,7 @@ def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool):
         if not obs:
             continue
 
-        h2_for_day = {label: h2_indices[label][date_str]
-                      for label in case_labels if date_str in h2_indices[label]}
-        if not h2_for_day:
-            continue
-        jobs.append((date_str, obs, h2_for_day, out_dir, alt_grid_m, run_l2))
+        jobs.append((date_str, obs, o.case_name, h2_index[date_str], out_dir, alt_grid_m, run_l2))
     return jobs
 
 
@@ -599,90 +502,8 @@ def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_ru
 
 
 # ---------------------------------------------------------------------------
-# run: orbit-track (analytical + real_files)
+# run: orbit-track
 # ---------------------------------------------------------------------------
-
-def _run_orbit_track_analytical_day(date_str: str, day_obs: list[dict], out_root: str,
-                                     alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray) -> str:
-    import xarray as xr
-    from cesm_hawc.noise import default_noise_model
-    from cesm_hawc.outputs import write_text_summary
-    from cesm_hawc.simulation import DEFAULT_PRODUCTS, run_ali_simulation_from_profiles
-    from cesm_hawc.waccm import WACCMAtmosphere
-
-    try:
-        day_out = os.path.join(out_root, date_str)
-        os.makedirs(day_out, exist_ok=True)
-        waccm_cache: dict[str, WACCMAtmosphere] = {}
-
-        def get_waccm(path: str) -> WACCMAtmosphere:
-            if path not in waccm_cache:
-                waccm_cache[path] = WACCMAtmosphere(path, alt_grid_km=alt_grid_m / 1e3)
-            return waccm_cache[path]
-
-        noise_model = default_noise_model()
-        l2_bg_list, l2_inj_list, summary_rows = [], [], []
-
-        for obs in day_obs:
-            t, lat, lon = obs["time"], obs["lat"], obs["lon"]
-            sim_geometry = {
-                "tangent_latitude": float(lat), "tangent_longitude": float(lon),
-                "altitude_grid": alt_grid_m, "polarization_states": ["I", "dolp"],
-                "sample_wavelengths": wavelengths_nm, "time": t,
-            }
-            profiles_bg = get_waccm(obs["bg_file"]).get_column_profiles(lat, lon, 0)
-            data_bg = run_ali_simulation_from_profiles(
-                profiles_bg, alt_grid_m, sim_geometry, products=DEFAULT_PRODUCTS, noise_model=noise_model
-            )
-            l2_bg_list.append(data_bg["l2"])
-
-            peak_ext_anom = peak_r_anom = None
-            if obs.get("inj_file"):
-                profiles_inj = get_waccm(obs["inj_file"]).get_column_profiles(lat, lon, 0)
-                data_inj = run_ali_simulation_from_profiles(
-                    profiles_inj, alt_grid_m, sim_geometry, products=DEFAULT_PRODUCTS, noise_model=noise_model
-                )
-                l2_inj_list.append(data_inj["l2"])
-                ext_bg = data_bg["l2"]["stratospheric_aerosol_extinction_per_m"]
-                ext_inj = data_inj["l2"]["stratospheric_aerosol_extinction_per_m"]
-                r_bg = data_bg["l2"]["stratospheric_aerosol_median_radius"]
-                r_inj = data_inj["l2"]["stratospheric_aerosol_median_radius"]
-                strat = ext_bg.altitude.values > 15000
-                peak_ext_anom = float((ext_inj - ext_bg).values[strat].max())
-                peak_r_anom = float((r_inj - r_bg).values[strat].max())
-
-            summary_rows.append({"time": t.isoformat(), "lat": lat, "lon": lon,
-                                  "peak_ext_anom_per_m": peak_ext_anom, "peak_r_anom_nm": peak_r_anom})
-
-        lats = [o["lat"] for o in day_obs]
-        lons = [o["lon"] for o in day_obs]
-        times = [o["time"] for o in day_obs]
-
-        def make_curtain(l2_list):
-            curtain = xr.concat(l2_list, dim="along_track")
-            return curtain.assign_coords(lat=("along_track", lats), lon=("along_track", lons),
-                                          time=("along_track", times))
-
-        make_curtain(l2_bg_list).to_netcdf(os.path.join(day_out, "curtain_background.nc"))
-        if l2_inj_list:
-            make_curtain(l2_inj_list).to_netcdf(os.path.join(day_out, "curtain_injection.nc"))
-
-        pd.DataFrame([{"time": o["time"], "lat": o["lat"], "lon": o["lon"], "bg_file": o["bg_file"]}
-                      for o in day_obs]).to_csv(os.path.join(day_out, "orbit_track.csv"), index=False)
-
-        lines = [f"Date: {date_str}", f"Observations: {len(day_obs)}", ""]
-        for row in summary_rows:
-            line = f"  {row['time']}  lat={row['lat']:+7.2f}  lon={row['lon']:+8.2f}"
-            if row["peak_ext_anom_per_m"] is not None:
-                line += f"  Δext={row['peak_ext_anom_per_m']:.2e} m⁻¹  Δr={row['peak_r_anom_nm']:.1f} nm"
-            lines.append(line)
-        write_text_summary(lines, day_out)
-
-        return f"OK   {date_str}  ({len(day_obs)} obs)"
-    except Exception:
-        log.error("[%s] FAILED:\n%s", date_str, traceback.format_exc())
-        return f"FAIL {date_str}"
-
 
 _L2_PRODUCTS = ("l2", "sk2_atmosphere", "front_end_radiance", "l1b")
 _FORWARD_ONLY_PRODUCTS = ("front_end_radiance", "l1b")
@@ -698,14 +519,15 @@ def _safe_time_str(t) -> str:
 
 
 def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
-                               h2_files: dict[str, str], out_root: str,
+                               case_name: str, h2_path: str, out_root: str,
                                alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray,
                                run_l2: bool) -> str:
-    """One day, all cases. Forward-only by default; full L2 retrieval per
+    """One CESM case, one day. Forward-only by default; full L2 retrieval per
     observation when ``run_l2`` is True (slow: 100-600s/profile measured in
     the original benchmarking). L2 mode is resumable within a day via an
     incrementally-written diagnostics CSV plus per-profile .nc saves — see
-    ``cesm_hawc.resume``.
+    ``cesm_hawc.resume``. All output lands under
+    ``out_root/case_name/sim_date_str/``.
     """
     import contextlib
     import io
@@ -723,23 +545,20 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
     try:
         from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
         simulator = IdealALISimulator()
-        waccm_cache: dict[str, WACCMAtmosphere] = {}
-
-        def get_waccm(path: str) -> WACCMAtmosphere:
-            if path not in waccm_cache:
-                waccm_cache[path] = WACCMAtmosphere(path, alt_grid_km=alt_grid_m / 1e3)
-            return waccm_cache[path]
+        waccm = WACCMAtmosphere(h2_path, alt_grid_km=alt_grid_m / 1e3)
 
         noise_model = default_noise_model()
         products = _L2_PRODUCTS if run_l2 else _FORWARD_ONLY_PRODUCTS
 
-        results: dict[str, list] = {label: [] for label in h2_files}
-        l2_results: dict[str, list] = {label: [] for label in h2_files}
+        case_out = os.path.join(out_root, case_name, sim_date_str)
+        l1b_results: list = []
+        l2_results: list = []
 
-        l2_diag_csv = os.path.join(out_root, "background", sim_date_str, "l2_diagnostics.csv")
-        completed_keys: set[tuple] = set()
+        l2_diag_csv = os.path.join(case_out, "l2_diagnostics.csv")
+        completed_keys: set[str] = set()
         if run_l2:
-            completed_keys = load_completed_keys(l2_diag_csv, ["case_label", "time"], _L2_DIAG_FIELDNAMES)
+            completed_keys = {k[0] for k in
+                               load_completed_keys(l2_diag_csv, ["time"], _L2_DIAG_FIELDNAMES)}
 
         successful_obs = []
         for obs in observations:
@@ -754,117 +573,101 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
             sim_input = dict(sim_geometry)
             sim_input["l1b_cfg"] = {"noise_model": noise_model}
 
-            obs_l1b: dict[str, "xr.Dataset"] = {}
-            skip_obs = False
-            for label, h2_path in h2_files.items():
-                profiles = get_waccm(h2_path).get_column_profiles(lat, lon, 0)
-                constituents, true_ext = build_waccm_constituents(
-                    profiles, alt_grid_m, return_extinction=True, truth_wavelengths_nm=wavelengths_nm
-                )
-                already_done = run_l2 and (label, time_key) in completed_keys
+            profiles = waccm.get_column_profiles(lat, lon, 0)
+            constituents, true_ext = build_waccm_constituents(
+                profiles, alt_grid_m, return_extinction=True, truth_wavelengths_nm=wavelengths_nm
+            )
+            already_done = run_l2 and time_key in completed_keys
 
-                l2_stdout = io.StringIO()
-                obs_t0 = time_mod.perf_counter()
-                try:
-                    if already_done:
-                        data = simulator.run(list(_FORWARD_ONLY_PRODUCTS), {**sim_input, "constituents": constituents})
-                    elif run_l2:
-                        with contextlib.redirect_stdout(l2_stdout):
-                            data = simulator.run(list(products), {**sim_input, "constituents": constituents})
-                    else:
+            l2_stdout = io.StringIO()
+            obs_t0 = time_mod.perf_counter()
+            try:
+                if already_done:
+                    data = simulator.run(list(_FORWARD_ONLY_PRODUCTS), {**sim_input, "constituents": constituents})
+                elif run_l2:
+                    with contextlib.redirect_stdout(l2_stdout):
                         data = simulator.run(list(products), {**sim_input, "constituents": constituents})
-                except ValueError as e:
-                    if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
-                        skip_obs = True
-                        break
-                    raise
-                except Exception:
-                    tb = traceback.format_exc()
-                    log.error("[%s] %s at %s FAILED, skipping this profile only:\n%s",
-                              sim_date_str, label, time_key, tb)
-                    if run_l2:
-                        append_csv_row(l2_diag_csv, {
-                            "case_label": label, "time": time_key, "lat": lat, "lon": lon,
-                            "elapsed_s": None, "converged": None, "termination_reason": None,
-                            "n_function_evaluations": None, "l2_num_iterations": None,
-                            "l2_final_cost": None, "status": "error", "error": str(tb)[-500:],
-                        }, _L2_DIAG_FIELDNAMES)
+                else:
+                    data = simulator.run(list(products), {**sim_input, "constituents": constituents})
+            except ValueError as e:
+                if "SZA" in str(e) and "greater than the allowed maximum" in str(e):
                     continue
-                obs_elapsed = time_mod.perf_counter() - obs_t0
-
-                ds_obs = l1b_image_to_dataset(data["l1b"], wavelengths_nm, true_ext, alt_grid_m)
-                obs_l1b[label] = ds_obs
-
+                raise
+            except Exception:
+                tb = traceback.format_exc()
+                log.error("[%s] %s at %s FAILED, skipping this profile only:\n%s",
+                          sim_date_str, case_name, time_key, tb)
                 if run_l2:
-                    if already_done:
-                        saved_path = os.path.join(out_root, label, sim_date_str, "l2_profiles",
-                                                   f"{label}_{_safe_time_str(t)}.nc")
-                        if os.path.exists(saved_path):
-                            l2_results[label].append(xr.open_dataset(saved_path).load())
-                    else:
-                        l2_obj = data.get("l2")
-                        diag = parse_scipy_convergence(l2_stdout.getvalue())
-                        native_diag = extract_l2_native_diagnostics(l2_obj)
-                        if l2_obj is not None:
-                            l2_results[label].append(l2_obj)
-                            saved_path = os.path.join(out_root, label, sim_date_str, "l2_profiles",
-                                                       f"{label}_{_safe_time_str(t)}.nc")
-                            os.makedirs(os.path.dirname(saved_path), exist_ok=True)
-                            l2_obj.to_netcdf(saved_path)
-                        append_csv_row(l2_diag_csv, {
-                            "case_label": label, "time": time_key, "lat": lat, "lon": lon,
-                            "elapsed_s": obs_elapsed, "converged": diag["converged"],
-                            "termination_reason": diag["termination_reason"],
-                            "n_function_evaluations": diag["n_function_evaluations"],
-                            "l2_num_iterations": native_diag["l2_num_iterations"],
-                            "l2_final_cost": native_diag["l2_final_cost"],
-                            "status": "ok", "error": None,
-                        }, _L2_DIAG_FIELDNAMES)
-
-            if skip_obs:
+                    append_csv_row(l2_diag_csv, {
+                        "case_label": case_name, "time": time_key, "lat": lat, "lon": lon,
+                        "elapsed_s": None, "converged": None, "termination_reason": None,
+                        "n_function_evaluations": None, "l2_num_iterations": None,
+                        "l2_final_cost": None, "status": "error", "error": str(tb)[-500:],
+                    }, _L2_DIAG_FIELDNAMES)
                 continue
-            for label, l1b in obs_l1b.items():
-                results[label].append(l1b)
+            obs_elapsed = time_mod.perf_counter() - obs_t0
+
+            ds_obs = l1b_image_to_dataset(data["l1b"], wavelengths_nm, true_ext, alt_grid_m)
+
+            if run_l2:
+                if already_done:
+                    saved_path = os.path.join(case_out, "l2_profiles",
+                                               f"{case_name}_{_safe_time_str(t)}.nc")
+                    if os.path.exists(saved_path):
+                        l2_results.append(xr.open_dataset(saved_path).load())
+                else:
+                    l2_obj = data.get("l2")
+                    diag = parse_scipy_convergence(l2_stdout.getvalue())
+                    native_diag = extract_l2_native_diagnostics(l2_obj)
+                    if l2_obj is not None:
+                        l2_results.append(l2_obj)
+                        saved_path = os.path.join(case_out, "l2_profiles",
+                                                   f"{case_name}_{_safe_time_str(t)}.nc")
+                        os.makedirs(os.path.dirname(saved_path), exist_ok=True)
+                        l2_obj.to_netcdf(saved_path)
+                    append_csv_row(l2_diag_csv, {
+                        "case_label": case_name, "time": time_key, "lat": lat, "lon": lon,
+                        "elapsed_s": obs_elapsed, "converged": diag["converged"],
+                        "termination_reason": diag["termination_reason"],
+                        "n_function_evaluations": diag["n_function_evaluations"],
+                        "l2_num_iterations": native_diag["l2_num_iterations"],
+                        "l2_final_cost": native_diag["l2_final_cost"],
+                        "status": "ok", "error": None,
+                    }, _L2_DIAG_FIELDNAMES)
+
+            l1b_results.append(ds_obs)
             successful_obs.append(obs)
 
         lats = [o["lat"] for o in successful_obs]
         lons = [o["lon"] for o in successful_obs]
         times = [o["time"] for o in successful_obs]
 
-        for label, l1b_list in results.items():
-            if not l1b_list:
-                continue
-            case_out = os.path.join(out_root, label, sim_date_str)
+        if l1b_results:
             os.makedirs(case_out, exist_ok=True)
-            curtain = xr.concat(l1b_list, dim="along_track").assign_coords(
+            curtain = xr.concat(l1b_results, dim="along_track").assign_coords(
                 lat=("along_track", lats), lon=("along_track", lons), time=("along_track", times)
             )
             curtain.to_netcdf(os.path.join(case_out, "curtain.nc"))
 
-        if run_l2:
-            for label, l2_list in l2_results.items():
-                if not l2_list:
-                    continue
-                case_out = os.path.join(out_root, label, sim_date_str)
-                try:
-                    l2_curtain = xr.concat(l2_list, dim="along_track").assign_coords(
-                        lat=("along_track", lats), lon=("along_track", lons), time=("along_track", times)
-                    )
-                    l2_curtain.to_netcdf(os.path.join(case_out, "l2_retrieval.nc"))
-                except Exception:
-                    log.error("[%s] failed to concat/save l2_retrieval.nc for case %s "
-                              "(per-profile l2_profiles/*.nc are still on disk):\n%s",
-                              sim_date_str, label, traceback.format_exc())
+        if run_l2 and l2_results:
+            try:
+                l2_curtain = xr.concat(l2_results, dim="along_track").assign_coords(
+                    lat=("along_track", lats), lon=("along_track", lons), time=("along_track", times)
+                )
+                l2_curtain.to_netcdf(os.path.join(case_out, "l2_retrieval.nc"))
+            except Exception:
+                log.error("[%s] failed to concat/save l2_retrieval.nc for case %s "
+                          "(per-profile l2_profiles/*.nc are still on disk):\n%s",
+                          sim_date_str, case_name, traceback.format_exc())
 
-        bg_out = os.path.join(out_root, "background", sim_date_str)
-        os.makedirs(bg_out, exist_ok=True)
+        os.makedirs(case_out, exist_ok=True)
         pd.DataFrame({"time": [o["time"].isoformat() for o in successful_obs], "lat": lats, "lon": lons}
-                     ).to_csv(os.path.join(bg_out, "orbit_track.csv"), index=False)
+                     ).to_csv(os.path.join(case_out, "orbit_track.csv"), index=False)
 
-        return f"OK   {sim_date_str}  ({len(successful_obs)}/{len(observations)} obs)"
+        return f"OK   {sim_date_str}  {case_name}  ({len(successful_obs)}/{len(observations)} obs)"
     except Exception:
-        log.error("[%s] FAILED:\n%s", sim_date_str, traceback.format_exc())
-        return f"FAIL {sim_date_str}"
+        log.error("[%s] %s FAILED:\n%s", sim_date_str, case_name, traceback.format_exc())
+        return f"FAIL {sim_date_str}  {case_name}"
 
 
 def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override, dry_run) -> None:
@@ -881,33 +684,27 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override, 
     alt_grid_m = ins.altitude_grid_m()
     wavelengths_nm = np.array(ins.wavelengths_nm)
 
-    if o.track_source == "analytical":
-        raw_jobs = _build_orbit_track_analytical_jobs(o, out_dir, alt_grid_m)
-        jobs = [(date, obs, out_dir, alt_grid_m, wavelengths_nm) for date, obs, _, _ in raw_jobs]
-        worker_fn = _run_orbit_track_analytical_day
-        max_tasks_per_child = None
-    else:
+    if o.run_l2:
+        log.warning("run_l2 is enabled: L2 retrieval is slow (100-600s/profile measured "
+                    "in the original benchmarking). Confirm your walltime/CPU-hour budget.")
+    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2)
+    jobs = []
+    n_skipped = 0
+    for date_str, obs, case_name, h2_path, _, _, run_l2 in raw_jobs:
+        expected = [os.path.join(out_dir, case_name, date_str, "curtain.nc")]
         if o.run_l2:
-            log.warning("run_l2 is enabled: L2 retrieval is slow (100-600s/profile measured "
-                        "in the original benchmarking). Confirm your walltime/CPU-hour budget.")
-        raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2)
-        jobs = []
-        n_skipped = 0
-        for date_str, obs, h2_for_day, _, _, run_l2 in raw_jobs:
-            expected = [os.path.join(out_dir, label, date_str, "curtain.nc") for label in h2_for_day]
-            if o.run_l2:
-                expected += [os.path.join(out_dir, label, date_str, "l2_retrieval.nc") for label in h2_for_day]
-            if outputs_already_exist(expected):
-                n_skipped += 1
-                continue
-            jobs.append((date_str, obs, h2_for_day, out_dir, alt_grid_m, wavelengths_nm, o.run_l2))
-        if n_skipped:
-            log.info("Skipping %d day(s) already fully completed from a previous run", n_skipped)
-        worker_fn = _run_orbit_daily_case_day
-        # Recycle workers after each day: an un-closed WACCMAtmosphere per
-        # observation across a long-lived worker was a real source of OOM
-        # kills in production L2 runs. See cesm_hawc.dispatch docstring.
-        max_tasks_per_child = 1 if o.run_l2 else None
+            expected += [os.path.join(out_dir, case_name, date_str, "l2_retrieval.nc")]
+        if outputs_already_exist(expected):
+            n_skipped += 1
+            continue
+        jobs.append((date_str, obs, case_name, h2_path, out_dir, alt_grid_m, wavelengths_nm, o.run_l2))
+    if n_skipped:
+        log.info("Skipping %d day(s) already fully completed from a previous run", n_skipped)
+    worker_fn = _run_orbit_daily_case_day
+    # Recycle workers after each day: an un-closed WACCMAtmosphere per
+    # observation across a long-lived worker was a real source of OOM
+    # kills in production L2 runs. See cesm_hawc.dispatch docstring.
+    max_tasks_per_child = 1 if o.run_l2 else None
 
     if dry_run:
         log.info("[dry-run] would run %d day(s), output to %s", len(jobs), out_dir)

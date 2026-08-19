@@ -1,6 +1,6 @@
 #!/bin/bash
 # Submit from the repo root:
-#   sbatch scripts/submit_orbit_daily_l2.sh [config.toml] [case_name]
+#   sbatch scripts/submit_orbit_daily_l2.sh [config.toml] [case_name] [strip-ozone]
 #
 # config.toml defaults to "config.toml" in the submit directory if omitted.
 # case_name, if given, overrides [orbit]'s case_name via --case-name --
@@ -10,6 +10,13 @@
 #   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_background_2030_001
 #   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_1.0Tg_2030_001
 #   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_0.1Tg_2030_001
+#
+# strip-ozone, if given as the literal string "strip-ozone", passes
+# --strip-ozone through (ozone-mismatch bias diagnostic -- see
+# scripts/diagnose_bias_hypotheses.py). Reads the same case's h2 files but
+# writes to <case_name>_no_ozone/ instead of <case_name>/, so it's safe to
+# queue alongside a normal run of the same case off the same config.toml:
+#   sbatch scripts/submit_orbit_daily_l2.sh config.toml sai_background_2030_001 strip-ozone
 #SBATCH --account=def-yourPI          # ← change to your PI's allocation account
 #SBATCH --job-name=orbit_daily_l2
 #SBATCH --time=60:00:00
@@ -72,6 +79,7 @@ export NUMEXPR_NUM_THREADS=1
 
 CONFIG="${1:-config.toml}"
 CASE_NAME="${2:-}"
+STRIP_OZONE_FLAG="${3:-}"
 
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate hawc_env
@@ -82,13 +90,17 @@ echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Config: $CONFIG"
 echo "Case name override: ${CASE_NAME:-<none -- using the configured case_name>}"
+echo "Strip ozone: ${STRIP_OZONE_FLAG:-<none -- using the configured strip_ozone>}"
 echo "Workers requested: 50 (cpus-per-task) -- confirm config.toml's n_workers matches"
 
 cd "$SLURM_SUBMIT_DIR"
+CESM_HAWC_ARGS=(run --config "$CONFIG" --mode orbit-track)
 if [ -n "$CASE_NAME" ]; then
-    cesm-hawc run --config "$CONFIG" --mode orbit-track --case-name "$CASE_NAME"
-else
-    cesm-hawc run --config "$CONFIG" --mode orbit-track
+    CESM_HAWC_ARGS+=(--case-name "$CASE_NAME")
 fi
+if [ "$STRIP_OZONE_FLAG" = "strip-ozone" ]; then
+    CESM_HAWC_ARGS+=(--strip-ozone)
+fi
+cesm-hawc "${CESM_HAWC_ARGS[@]}"
 
 echo "Job finished: $(date)"

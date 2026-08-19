@@ -54,6 +54,16 @@ run_start_date = ""       # optional date-range restriction, "" = all
 run_end_date   = ""
 run_l2         = false    # true = also run full L2 retrieval (slow)
 
+# true = zero WACCM ozone VMR before building the simulated atmosphere, for
+# each day/observation -- an ozone-mismatch bias diagnostic (see
+# scripts/diagnose_bias_hypotheses.py for the small-scale version of this
+# same idea). Reads the SAME case's h2 files as a normal run but writes to
+# out_dir/<case_name>_no_ozone/ instead of out_dir/<case_name>/, so it
+# won't collide with or resume into a normal run of the same case.
+# Can also be set per-invocation via `cesm-hawc run --strip-ozone` without
+# editing this file (e.g. to queue both variants off one shared config).
+strip_ozone    = false
+
 out_dir   = "~/results/hawc_ali_orbit/"
 n_workers = 4          # parallel worker processes (by day); 1 = serial
 

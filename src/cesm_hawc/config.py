@@ -109,6 +109,7 @@ class OrbitConfig:
     run_start_date: str | None = None
     run_end_date: str | None = None
     run_l2: bool = False
+    strip_ozone: bool = False
 
     @classmethod
     def from_toml_dict(cls, d: dict) -> "OrbitConfig":
@@ -126,6 +127,7 @@ class OrbitConfig:
             run_start_date=d.get("run_start_date") or None,
             run_end_date=d.get("run_end_date") or None,
             run_l2=bool(d.get("run_l2", False)),
+            strip_ozone=bool(d.get("strip_ozone", False)),
         )
 
 

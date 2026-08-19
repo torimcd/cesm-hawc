@@ -477,8 +477,9 @@ def _run_month(date: str, bg_path: str, inj_path: str | None, out_root: str,
 
 
 def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
-               case_name_override, dry_run) -> None:
+               case_name_override, dry_run, strip_ozone_override: bool = False) -> None:
     del case_name_override  # not applicable to batch mode
+    del strip_ozone_override  # not applicable to batch mode
     from cesm_hawc import file_index
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.constituents import warm_mode_databases
@@ -532,13 +533,19 @@ def _safe_time_str(t) -> str:
 def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
                                case_name: str, h2_path: str, out_root: str,
                                alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray,
-                               run_l2: bool) -> str:
+                               run_l2: bool, strip_ozone: bool = False) -> str:
     """One CESM case, one day. Forward-only by default; full L2 retrieval per
     observation when ``run_l2`` is True (slow: 100-600s/profile measured in
     the original benchmarking). L2 mode is resumable within a day via an
     incrementally-written diagnostics CSV plus per-profile .nc saves — see
     ``cesm_hawc.resume``. All output lands under
     ``out_root/case_name/sim_date_str/``.
+
+    ``strip_ozone``: zero each profile's WACCM ozone VMR before building the
+    simulated atmosphere (ozone-mismatch bias diagnostic). ``case_name``
+    here is purely an output label -- ``_run_orbit_track`` passes it as
+    ``<real_case>_no_ozone`` in that case, while ``h2_path`` still points at
+    the real case's h2 file, so the h2 data read is unaffected.
     """
     import contextlib
     import io
@@ -592,6 +599,8 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
             sim_input["l1b_cfg"] = {"noise_model": noise_model}
 
             profiles = waccm.get_column_profiles(lat, lon, 0)
+            if strip_ozone:
+                profiles = {**profiles, "vmr_o3": np.zeros_like(profiles["vmr_o3"])}
             constituents, true_ext = build_waccm_constituents(
                 profiles, alt_grid_m, return_extinction=True, truth_wavelengths_nm=wavelengths_nm
             )
@@ -689,7 +698,7 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
 
 
 def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
-                      case_name_override, dry_run) -> None:
+                      case_name_override, dry_run, strip_ozone_override: bool = False) -> None:
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.constituents import warm_mode_databases
     from cesm_hawc.dispatch import run_jobs
@@ -700,24 +709,34 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     o, ins = cfg.orbit, cfg.instrument
     out_dir = out_dir_override or o.out_dir
     n_workers = n_workers_override or o.n_workers
-    case_name = case_name_override or o.case_name
+    h2_case_name = case_name_override or o.case_name
+    strip_ozone = strip_ozone_override or o.strip_ozone
+    # An ozone-stripped run reads the SAME case's h2 files as a normal run
+    # of h2_case_name, so it must not share that run's output path -- write
+    # to a "_no_ozone"-suffixed case folder instead of overwriting/resuming
+    # into the real case's output.
+    output_case_name = f"{h2_case_name}_no_ozone" if strip_ozone else h2_case_name
     alt_grid_m = ins.altitude_grid_m()
     wavelengths_nm = np.array(ins.wavelengths_nm)
 
     if o.run_l2:
         log.warning("run_l2 is enabled: L2 retrieval is slow (100-600s/profile measured "
                     "in the original benchmarking). Confirm your walltime/CPU-hour budget.")
-    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=case_name)
+    if strip_ozone:
+        log.warning("strip_ozone is enabled: WACCM ozone VMR will be zeroed before building "
+                    "the simulated atmosphere. Output case folder: %s", output_case_name)
+    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=h2_case_name)
     jobs = []
     n_skipped = 0
-    for date_str, obs, case_name, h2_path, _, _, run_l2 in raw_jobs:
-        expected = [os.path.join(out_dir, case_name, date_str, "curtain.nc")]
+    for date_str, obs, _h2_case_name, h2_path, _, _, run_l2 in raw_jobs:
+        expected = [os.path.join(out_dir, output_case_name, date_str, "curtain.nc")]
         if o.run_l2:
-            expected += [os.path.join(out_dir, case_name, date_str, "l2_retrieval.nc")]
+            expected += [os.path.join(out_dir, output_case_name, date_str, "l2_retrieval.nc")]
         if outputs_already_exist(expected):
             n_skipped += 1
             continue
-        jobs.append((date_str, obs, case_name, h2_path, out_dir, alt_grid_m, wavelengths_nm, o.run_l2))
+        jobs.append((date_str, obs, output_case_name, h2_path, out_dir, alt_grid_m, wavelengths_nm,
+                     o.run_l2, strip_ozone))
     if n_skipped:
         log.info("Skipping %d day(s) already fully completed from a previous run", n_skipped)
     worker_fn = _run_orbit_daily_case_day
@@ -827,8 +846,9 @@ def _run_orbit_file(orbit_path: str, h2_bg_path: str, h2_inj_path: str | None,
 
 
 def _run_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
-                         case_name_override, dry_run) -> None:
+                         case_name_override, dry_run, strip_ozone_override: bool = False) -> None:
     del case_name_override  # not applicable to orbit-file mode
+    del strip_ozone_override  # not applicable to orbit-file mode
     from cesm_hawc.calibration import warm_calibration_database
     from cesm_hawc.dispatch import run_jobs
 
@@ -895,7 +915,7 @@ _SAVE_INPUTS_DISPATCH = {
     "orbit-file": _save_inputs_orbit_file_cmd,
 }
 _RUN_DISPATCH = {
-    "single": lambda cfg, out, workers, case_name, dry: _run_single(cfg, out, dry),
+    "single": lambda cfg, out, workers, case_name, dry, strip_ozone: _run_single(cfg, out, dry),
     "batch": _run_batch,
     "orbit-track": _run_orbit_track,
     "orbit-file": _run_orbit_file_cmd,
@@ -919,6 +939,14 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--case-name", default=None,
                          help="Override [orbit]'s case_name (orbit-track mode only) -- lets one "
                               "config.toml be reused across multiple CESM cases without editing it")
+        sp.add_argument("--strip-ozone", action="store_true",
+                         help="Zero WACCM ozone VMR before building the simulated atmosphere "
+                              "(run --mode orbit-track only) -- ozone-mismatch bias diagnostic, "
+                              "see scripts/diagnose_bias_hypotheses.py. Reads the same case's h2 "
+                              "files but writes to <case_name>_no_ozone/ instead of <case_name>/, "
+                              "so it won't collide with a normal run. Only turns strip_ozone ON: "
+                              "overrides config's [orbit] strip_ozone=false, but a config with "
+                              "strip_ozone=true can't be forced back to false from here.")
         sp.add_argument("--dry-run", action="store_true",
                          help="Print the job count without running anything")
 
@@ -960,7 +988,8 @@ def main(argv: list[str] | None = None) -> None:
                                           args.dry_run, args.profiles_only)
     elif args.command == "run":
         _require_sim_deps()
-        _RUN_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.case_name, args.dry_run)
+        _RUN_DISPATCH[args.mode](cfg, args.out_dir, args.n_workers, args.case_name, args.dry_run,
+                                  args.strip_ozone)
 
 
 if __name__ == "__main__":

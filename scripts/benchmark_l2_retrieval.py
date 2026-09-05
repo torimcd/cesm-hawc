@@ -158,7 +158,7 @@ def _get_simulator():
     database access on every single call)."""
     global _SIMULATOR
     if _SIMULATOR is None:
-        from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+        from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
         _SIMULATOR = IdealALISimulator()
     return _SIMULATOR
 

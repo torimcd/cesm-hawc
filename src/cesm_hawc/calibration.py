@@ -38,9 +38,15 @@ def patch_calibration_database_race() -> None:
     ``_initialize_data()`` actually looks up — it did
     ``from hawcsimulator.ali.calibration import calibration_database`` at
     its own import time, binding a separate name inside
-    ``ideal_spectrograph``'s module namespace that still points at the
+    ``ideal_dolp_imager``'s module namespace that still points at the
     original function. Patching only the first has no effect on simulator
     construction.
+
+    Note: ``ideal_dolp_imager`` calls ``calibration_database("ideal_spectrograph",
+    "v1")`` internally too -- both configurations share the same calibration
+    dataset name/version; that string is a dataset identifier, unrelated to
+    which simulator class is actually constructed. See ``cesm_hawc.simulation``
+    for why ``ideal_dolp_imager`` is the one in use.
 
     Idempotent and safe to call more than once (e.g. once in the main
     process before dispatch, and again per worker).
@@ -51,7 +57,7 @@ def patch_calibration_database_race() -> None:
     try:
         from hawcsimulator.ali import calibration as _cal_mod
         from hawcsimulator.ali.configurations import (
-            ideal_spectrograph as _ideal_spectrograph_mod,
+            ideal_dolp_imager as _ideal_dolp_imager_mod,
         )
     except ImportError:
         return
@@ -65,7 +71,7 @@ def patch_calibration_database_race() -> None:
         return _orig_calibration_database(name, version)
 
     _cal_mod.calibration_database = _safe_calibration_database
-    _ideal_spectrograph_mod.calibration_database = _safe_calibration_database
+    _ideal_dolp_imager_mod.calibration_database = _safe_calibration_database
     _patched = True
 
 

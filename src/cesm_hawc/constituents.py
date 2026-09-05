@@ -88,7 +88,12 @@ except ImportError as e:
 # correct mode_width per mode -- so they're drop-in compatible as
 # ExtinctionScatterer's optical_property argument.
 _MODE_WIDTHS = {"aerosol_accum": 1.6, "aerosol_coarse": 1.2}
-_WAVELENGTHS_NM = np.array([470, 525, 745, 1020, 1230, 1450, 1500])
+# Wavelength grid for the TRUTH-atmosphere mode-matched Mie databases (built by
+# _get_mode_db() below, used by ExtinctionScatterer to represent the *simulated*
+# aerosol -- not to be confused with aliprocessing's own separate, single-mode
+# retrieval-side database).
+_WAVELENGTHS_NM = np.array([470, 525, 745, 869, 1020, 1230, 1450, 1500, 1560,
+                             1750, 2000, 2250, 2500])
 _MEDIAN_RADIUS_NM = np.arange(10, 600, 10.0)
 
 _mode_dbs: dict = {}

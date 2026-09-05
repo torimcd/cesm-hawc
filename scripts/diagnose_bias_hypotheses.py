@@ -209,9 +209,19 @@ def main(config_path: str, n_profiles: int, lat_span_deg: float, out_dir: str | 
     warm_calibration_database()
     warm_mode_databases()
 
-    from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+    from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
+    if not use_noise:
+        raise SystemExit(
+            "--no-noise is not supported with ideal_dolp_imager: its "
+            "L1bGeneratorIdealImager calls noise_model.calc_noise() "
+            "unconditionally (no noiseless fallback like the older "
+            "ideal_spectrograph config had), so passing noise_model=None "
+            "raises AttributeError deep in the Hamilton DAG rather than "
+            "doing anything useful. Drop --no-noise and use "
+            "cesm_hawc.noise.default_noise_model() (the default)."
+        )
     simulator = IdealALISimulator()
-    noise_model = default_noise_model() if use_noise else None
+    noise_model = default_noise_model()
 
     lats = np.clip(
         geo.tangent_lat + np.linspace(-lat_span_deg / 2, lat_span_deg / 2, n_profiles),

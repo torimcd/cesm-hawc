@@ -14,7 +14,7 @@ from cesm_hawc.waccm import WACCMAtmosphere
 from cesm_hawc.constituents import build_waccm_constituents
 
 try:
-    from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+    from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
     from hawcsimulator.noise import ALINoiseModel
 except ImportError as e:
     raise ImportError("hawcsimulator must be installed: pip install hawcsimulator") from e
@@ -27,9 +27,10 @@ def run_ali_simulation_from_profiles(
     profiles: dict,
     alt_m: np.ndarray,
     sim_geometry: dict,
+    *,
     simulator: "IdealALISimulator | None" = None,
     products: tuple = DEFAULT_PRODUCTS,
-    noise_model: ALINoiseModel | None = None,
+    noise_model: ALINoiseModel,
     return_extinction: bool = False,
     truth_wavelengths_nm: np.ndarray | None = None,
 ):
@@ -61,8 +62,9 @@ def run_ali_simulation_from_profiles(
         Reused simulator instance. A new one is constructed if omitted.
     products : tuple of str
         Products to request from ``simulator.run()``.
-    noise_model : ALINoiseModel, optional
-        If given, passed as ``sim_input["l1b_cfg"]["noise_model"]``. Use
+    noise_model : ALINoiseModel
+        Required (keyword-only) -- passed as
+        ``sim_input["l1b_cfg"]["noise_model"]``. Use
         ``cesm_hawc.noise.default_noise_model()`` rather than constructing
         one directly.
     return_extinction : bool
@@ -78,12 +80,16 @@ def run_ali_simulation_from_profiles(
     true_extinction : dict, optional
         Only returned if ``return_extinction=True``.
     """
+    if noise_model is None:
+        raise ValueError(
+            "noise_model is required -- IdealALISimulator (ideal_dolp_imager) "
+            "has no noiseless fallback. Pass cesm_hawc.noise.default_noise_model()."
+        )
     if simulator is None:
         simulator = IdealALISimulator()
 
     sim_input = dict(sim_geometry)
-    if noise_model is not None:
-        sim_input["l1b_cfg"] = {"noise_model": noise_model}
+    sim_input["l1b_cfg"] = {"noise_model": noise_model}
 
     if return_extinction:
         constituents, true_ext = build_waccm_constituents(
@@ -101,6 +107,7 @@ def run_ali_simulation_from_profiles(
 def run_ali_simulation(
     background_file: str,
     injection_file: str | None = None,
+    *,
     lat: float = 15.0,
     lon: float = 0.0,
     time_index: int = 0,
@@ -109,7 +116,7 @@ def run_ali_simulation(
     obs_time: str | pd.Timestamp = "2035-01-01T12:00:00Z",
     wavelengths_nm: np.ndarray | None = None,
     alt_grid_m: np.ndarray | None = None,
-    noise_model: ALINoiseModel | None = None,
+    noise_model: ALINoiseModel,
 ) -> dict:
     """
     Run the HAWC IdealALISimulator on a WACCM background and optional
@@ -134,6 +141,15 @@ def run_ali_simulation(
         Default: [470, 745, 1020] nm (quickstart channels).
     alt_grid_m : array, optional
         Altitude grid [m]. Default: 0–65 km in 1 km steps.
+    noise_model : ALINoiseModel
+        Required (keyword-only) -- passed through to the simulator's
+        ``l1b_cfg``. Use ``cesm_hawc.noise.default_noise_model()`` rather
+        than constructing one directly. ``IdealALISimulator``
+        (``ideal_dolp_imager``) has no noiseless fallback -- passing
+        ``None`` raises ``AttributeError: 'NoneType' object has no
+        attribute 'calc_noise'`` deep inside the Hamilton DAG;
+        ``noise_model=None`` is checked explicitly below to fail with a
+        clearer message instead.
 
     Returns
     -------
@@ -148,13 +164,20 @@ def run_ali_simulation(
 
     Examples
     --------
+    >>> from cesm_hawc.noise import default_noise_model
     >>> result = run_ali_simulation(
     ...     "background.cam.h0.2035-02.nc",
     ...     "injection.cam.h0.2035-02.nc",
     ...     lat=30.6, lon=180.0,
+    ...     noise_model=default_noise_model(),
     ... )
     >>> print(f"Peak extinction anomaly: {result['peak_extinction_anomaly_m']:.2e} m⁻¹")
     """
+    if noise_model is None:
+        raise ValueError(
+            "noise_model is required -- IdealALISimulator (ideal_dolp_imager) "
+            "has no noiseless fallback. Pass cesm_hawc.noise.default_noise_model()."
+        )
     if wavelengths_nm is None:
         wavelengths_nm = np.array([470.0, 745.0, 1020.0])
     if alt_grid_m is None:
@@ -173,9 +196,8 @@ def run_ali_simulation(
         "polarization_states":         ["I", "dolp"],
         "sample_wavelengths":          wavelengths_nm,
         "time":                        obs_time,
+        "l1b_cfg":                     {"noise_model": noise_model},
     }
-    if noise_model is not None:
-        sim_input["l1b_cfg"] = {"noise_model": noise_model}
 
     # ── Background ────────────────────────────────────────────────────────
     waccm_bg   = WACCMAtmosphere(background_file, alt_grid_km=alt_grid_m / 1e3)

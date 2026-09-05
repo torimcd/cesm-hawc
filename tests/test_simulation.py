@@ -8,14 +8,17 @@ pytest.importorskip("hawcsimulator")
 import numpy as np
 import pandas as pd
 
+from cesm_hawc.noise import default_noise_model
 from cesm_hawc.simulation import DEFAULT_PRODUCTS, run_ali_simulation_from_profiles
 from conftest import ALT_GRID_M, load_profiles_dict
 
 
 def test_run_ali_simulation_from_profiles_smoke(example_background_column_path):
     """End-to-end forward-model + L2 retrieval smoke test against the
-    bundled example fixture. This is the migration target for the old
-    scripts/test_one_day_multicase.py manual smoke check."""
+    bundled example fixture.
+
+    Explicit noise_model is required: IdealALISimulator (ideal_dolp_imager)
+    has no noiseless fallback, omitting it raises AttributeError."""
     profiles = load_profiles_dict(example_background_column_path)
     sim_geometry = {
         "tangent_latitude": 30.6,
@@ -30,6 +33,7 @@ def test_run_ali_simulation_from_profiles_smoke(example_background_column_path):
 
     data = run_ali_simulation_from_profiles(
         profiles, ALT_GRID_M, sim_geometry, products=DEFAULT_PRODUCTS,
+        noise_model=default_noise_model(),
     )
 
     assert "l2" in data

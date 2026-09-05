@@ -568,7 +568,7 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
     configure_environment()
 
     try:
-        from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+        from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
         simulator = IdealALISimulator()
         waccm = WACCMAtmosphere(h2_path, alt_grid_km=alt_grid_m / 1e3)
 
@@ -778,7 +778,7 @@ def _run_orbit_file(orbit_path: str, h2_bg_path: str, h2_inj_path: str | None,
 
     orbit_name = os.path.splitext(os.path.basename(orbit_path))[0]
     try:
-        from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+        from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
 
         orbit = xr.open_dataset(orbit_path, decode_times=True)
         n_time, n_across = orbit.sizes["time"], orbit.sizes["across"]

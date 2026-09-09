@@ -14,4 +14,7 @@ dependencies:
   - dask
   - pip
   - pip:
+    # Pinned to a commit past the aerosol_median_radius_db() 1500nm wavelength
+    # cutoff fix.
+    - aliprocessing @ git+https://github.com/usask-arg/ali-processing.git@a451f0d73d4ca0404559adb654fa52861287a089
     - hawcsimulator  # pure Python, safe to install from PyPI

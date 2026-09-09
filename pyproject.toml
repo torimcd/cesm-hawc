@@ -22,7 +22,18 @@ cesm-hawc = "cesm_hawc.cli:main"
 [project.optional-dependencies]
 # End-to-end simulation (the `cesm-hawc run` CLI command / cesm_hawc.simulation
 # / cesm_hawc.constituents). hawcsimulator requires Python >=3.11.
-sim = ["hawcsimulator", "sasktran2"]
+#
+# aliprocessing is pinned directly to commit a451f0d on usask-arg/ali-processing main --
+# the latest released tag, v2025.02.0, still has aerosol_median_radius_db()
+# hardcoded to a Mie database wavelength grid topping out at 1500nm, which
+# silently zeros aerosol extinction at any channel above that.
+# Bump this pin (or drop it once a release tag >= v2025.02.0 exists
+# and hawcsimulator's own minimum requirement is updated to it).
+sim = [
+    "aliprocessing @ git+https://github.com/usask-arg/ali-processing.git@a451f0d73d4ca0404559adb654fa52861287a089",
+    "hawcsimulator",
+    "sasktran2",
+]
 dev = ["pytest", "jupyter", "matplotlib", "cartopy"]
 
 [tool.setuptools.packages.find]

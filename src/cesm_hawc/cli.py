@@ -238,6 +238,73 @@ def _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, run_l2: bool, cas
     return jobs
 
 
+def _build_orbit_track_subdaily_jobs(o, out_dir, alt_grid_m, run_l2: bool, case_name: str):
+    """Like ``_build_orbit_track_real_files_jobs``, but for sub-daily (e.g.
+    12-hourly) h2 output: one job per h2 *file* rather than per calendar
+    day, since ``index_by_date`` would otherwise silently keep only one of
+    several same-day files.
+
+    Reuses the exact same orbit-day-cycling / ``extract_observations`` call
+    per calendar date as the daily path -- the full-day observation pool is
+    identical either way. The only difference is what happens after that:
+    each observation is assigned to whichever h2 snapshot is nearest to it
+    in real elapsed time (via bisection against the globally-sorted
+    snapshot timestamps across the whole case, not a fixed clock-time
+    split), and jobs are grouped by snapshot instead of by day. This also
+    correctly handles an observation near midnight being closer to the
+    *next* calendar date's snapshot than to the current date's own, since
+    the nearest-neighbour search isn't confined to one date's files.
+    """
+    import bisect
+
+    from cesm_hawc import file_index, orbit_files
+
+    orbit_paths = orbit_files.load_orbit_files(o.orbit_dir, o.orbit_pattern)
+    epoch = pd.Timestamp(o.orbit_epoch)
+    cache_path = os.path.join(out_dir, ".orbit_day_index_cache.json")
+    day_idx = orbit_files.build_orbit_day_index(orbit_paths, epoch, cache_path=cache_path)
+    n_orbit_days = max(day_idx.keys()) + 1
+
+    h2_index = file_index.index_by_timestamp(
+        os.path.join(o.waccm_data_dir, case_name, "atm", "hist"), o.h2_pattern
+    )
+    if not h2_index:
+        return []
+    snapshot_times = sorted(h2_index.keys())
+    case_dates = sorted({ts.strftime("%Y-%m-%d") for ts in snapshot_times})
+
+    buckets: dict[pd.Timestamp, list] = {ts: [] for ts in snapshot_times}
+    for i, date_str in enumerate(case_dates):
+        if o.run_start_date and date_str < o.run_start_date:
+            continue
+        if o.run_end_date and date_str > o.run_end_date:
+            continue
+        orbit_day = i % n_orbit_days
+        if orbit_day not in day_idx:
+            continue
+
+        sim_date = pd.Timestamp(date_str)
+        obs = orbit_files.extract_observations(
+            day_idx[orbit_day], sim_date, o.obs_cadence_s, o.center_pixel, epoch
+        )
+        for ob in obs:
+            t = pd.Timestamp(ob["time"])
+            pos = bisect.bisect_left(snapshot_times, t)
+            candidates = [c for c in (pos - 1, pos) if 0 <= c < len(snapshot_times)]
+            nearest = min(candidates, key=lambda c: abs(snapshot_times[c] - t))
+            buckets[snapshot_times[nearest]].append(ob)
+
+    jobs = []
+    for ts in snapshot_times:
+        obs = buckets[ts]
+        if not obs:
+            continue
+        seconds_of_day = int((ts - ts.normalize()).total_seconds())
+        label = f"{ts.strftime('%Y-%m-%d')}-{seconds_of_day:05d}"
+        jobs.append((label, obs, case_name, h2_index[ts], out_dir, alt_grid_m, run_l2))
+    return jobs
+
+
 # ---------------------------------------------------------------------------
 # save-inputs: orbit-file
 # ---------------------------------------------------------------------------
@@ -725,7 +792,10 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     if strip_ozone:
         log.warning("strip_ozone is enabled: WACCM ozone VMR will be zeroed before building "
                     "the simulated atmosphere. Output case folder: %s", output_case_name)
-    raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=h2_case_name)
+    if o.h2_cadence == "subdaily":
+        raw_jobs = _build_orbit_track_subdaily_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=h2_case_name)
+    else:
+        raw_jobs = _build_orbit_track_real_files_jobs(o, out_dir, alt_grid_m, o.run_l2, case_name=h2_case_name)
     jobs = []
     n_skipped = 0
     for date_str, obs, _h2_case_name, h2_path, _, _, run_l2 in raw_jobs:

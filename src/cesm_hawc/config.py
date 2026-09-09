@@ -90,10 +90,20 @@ class BatchConfig:
 @dataclass(frozen=True)
 class OrbitConfig:
     """``[orbit]`` — orbit-track runs (``cesm-hawc run --mode orbit-track``):
-    a real HAWC orbit-track file set matched to one CESM case's daily h2
+    a real HAWC orbit-track file set matched to one CESM case's h2
     files by day-of-year offset from ``orbit_epoch``, optionally with full
     L2 retrieval. One case per run (``case_name``) -- run it once per case
     (background or injection) you need output for.
+
+    ``h2_cadence``: ``"daily"`` (default) assumes one h2 file per calendar
+    date. ``"subdaily"`` is for h2 output written more than once per day
+    (e.g. 12-hourly) -- one job is dispatched per h2 *file* rather than per
+    day, with each observation assigned to whichever h2 snapshot is nearest
+    to it in real elapsed time (not a fixed clock-time split), so this also
+    correctly handles an observation near midnight being closer to the next
+    day's snapshot than to the current day's own. Do not use ``"daily"``
+    with more than one h2 file per date -- ``index_by_date`` silently keeps
+    only one of them.
     """
     out_dir: str
     n_workers: int
@@ -105,6 +115,7 @@ class OrbitConfig:
     orbit_epoch: str = "2019-08-01"
     center_pixel: int = 256
     h2_pattern: str = "*.cam.h2.*.nc"
+    h2_cadence: str = "daily"
     obs_cadence_s: float = 60.0
     run_start_date: str | None = None
     run_end_date: str | None = None
@@ -113,6 +124,11 @@ class OrbitConfig:
 
     @classmethod
     def from_toml_dict(cls, d: dict) -> "OrbitConfig":
+        h2_cadence = d.get("h2_cadence", "daily")
+        if h2_cadence not in ("daily", "subdaily"):
+            raise ValueError(
+                f"[orbit] h2_cadence must be 'daily' or 'subdaily', got {h2_cadence!r}"
+            )
         return cls(
             out_dir=_expand(_require(d, "out_dir", "orbit")),
             n_workers=int(d.get("n_workers", 1)),
@@ -123,6 +139,7 @@ class OrbitConfig:
             orbit_epoch=d.get("orbit_epoch", "2019-08-01"),
             center_pixel=int(d.get("center_pixel", 256)),
             h2_pattern=d.get("h2_pattern", "*.cam.h2.*.nc"),
+            h2_cadence=h2_cadence,
             obs_cadence_s=float(d.get("obs_cadence_s", 60.0)),
             run_start_date=d.get("run_start_date") or None,
             run_end_date=d.get("run_end_date") or None,

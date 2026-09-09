@@ -49,6 +49,15 @@ waccm_data_dir = "/path/to/cesm/output/archive/"   # root containing <casename>/
 h2_pattern     = "*.cam.h2.*.nc"
 case_name      = "sai_background_2035_001"         # the one CESM case this run processes
 
+# "daily" (default) assumes one h2 file per calendar date. Use "subdaily"
+# if your h2 output is written more than once per day (e.g. 12-hourly) --
+# with "daily", a directory holding more than one file per date silently
+# keeps only one of them (see cesm_hawc.file_index.index_by_date). Under
+# "subdaily", one job is dispatched per h2 file instead of per day, with
+# each observation matched to whichever h2 snapshot is nearest to it in
+# real time.
+h2_cadence     = "daily"
+
 obs_cadence_s  = 60.0     # seconds between simulated observations
 run_start_date = ""       # optional date-range restriction, "" = all
 run_end_date   = ""

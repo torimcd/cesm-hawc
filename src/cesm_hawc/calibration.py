@@ -91,3 +91,38 @@ def warm_calibration_database(name: str = "ideal_spectrograph", version: str = "
         calibration_database(name, version)
     except Exception as e:
         log.warning("Could not pre-warm calibration database: %s", e)
+
+
+def warm_retrieval_optical_database() -> None:
+    """
+    Pre-build ``aliprocessing``'s own retrieval-side Mie database
+    (``aerosol_median_radius_db()``) once, serially, in the main process
+    before dispatching worker processes.
+
+    ``ideal_dolp_imager._initialize_data()`` calls ``aerosol_median_radius_db()``
+    every time an ``IdealALISimulator`` is constructed -- once per worker
+    job. This is a *different* cache from the ones the other two warm_*
+    functions handle: ``warm_calibration_database`` covers hawcsimulator's
+    calibration .nc, and ``cesm_hawc.constituents.warm_mode_databases``
+    covers the mode-matched (accum/coarse) databases used for the
+    *simulated* atmosphere. This one is the retrieval's own single-mode
+    optical property assumption, built by ``aliprocessing``/``sasktran2``
+    and cached by its own (wavelength grid, mode width, refractive index)
+    key. If that key hasn't been built yet -- e.g. right after upgrading
+    ``aliprocessing`` to a version with a different wavelength grid, which
+    changes the cache key -- every worker process constructing its first
+    ``IdealALISimulator`` simultaneously races to build it, and a worker
+    can read a still-being-written file. That surfaces as ``ValueError:
+    did not find a match in any of xarray's currently installed IO
+    backends`` (an incomplete file doesn't look like valid NetCDF to
+    xarray's format sniffing) rather than a clear cache/race error,
+    on every single job in the run.
+    """
+    try:
+        from aliprocessing.l2.optical import aerosol_median_radius_db
+    except ImportError:
+        return
+    try:
+        aerosol_median_radius_db()
+    except Exception as e:
+        log.warning("Could not pre-warm retrieval optical database: %s", e)

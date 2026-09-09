@@ -548,7 +548,7 @@ def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     del case_name_override  # not applicable to batch mode
     del strip_ozone_override  # not applicable to batch mode
     from cesm_hawc import file_index
-    from cesm_hawc.calibration import warm_calibration_database
+    from cesm_hawc.calibration import warm_calibration_database, warm_retrieval_optical_database
     from cesm_hawc.constituents import warm_mode_databases
     from cesm_hawc.dispatch import run_jobs
 
@@ -575,6 +575,7 @@ def _run_batch(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     log.info("Pre-warming calibration database and Mie databases...")
     warm_calibration_database()
     warm_mode_databases()
+    warm_retrieval_optical_database()
 
     results = run_jobs(_run_month, jobs, n_workers, on_result=lambda r: log.info(r))
     _report(results, "months")
@@ -766,7 +767,7 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
 
 def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
                       case_name_override, dry_run, strip_ozone_override: bool = False) -> None:
-    from cesm_hawc.calibration import warm_calibration_database
+    from cesm_hawc.calibration import warm_calibration_database, warm_retrieval_optical_database
     from cesm_hawc.constituents import warm_mode_databases
     from cesm_hawc.dispatch import run_jobs
     from cesm_hawc.resume import outputs_already_exist
@@ -823,6 +824,7 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     log.info("Pre-warming calibration database and Mie databases...")
     warm_calibration_database()
     warm_mode_databases()
+    warm_retrieval_optical_database()
 
     results = run_jobs(worker_fn, jobs, n_workers, max_tasks_per_child=max_tasks_per_child,
                         on_result=lambda r: log.info(r))
@@ -919,7 +921,7 @@ def _run_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_overrid
                          case_name_override, dry_run, strip_ozone_override: bool = False) -> None:
     del case_name_override  # not applicable to orbit-file mode
     del strip_ozone_override  # not applicable to orbit-file mode
-    from cesm_hawc.calibration import warm_calibration_database
+    from cesm_hawc.calibration import warm_calibration_database, warm_retrieval_optical_database
     from cesm_hawc.dispatch import run_jobs
 
     if cfg.orbit_real is None:
@@ -941,6 +943,7 @@ def _run_orbit_file_cmd(cfg: CesmHawcConfig, out_dir_override, n_workers_overrid
     os.makedirs(out_dir, exist_ok=True)
     log.info("Pre-warming calibration database...")
     warm_calibration_database()
+    warm_retrieval_optical_database()
 
     results = run_jobs(_run_orbit_file, jobs, n_workers, on_result=lambda r: log.info(r))
     _report(results, "orbit files")

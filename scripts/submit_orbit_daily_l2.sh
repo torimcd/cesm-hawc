@@ -22,7 +22,7 @@
 #SBATCH --time=60:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=50
+#SBATCH --cpus-per-task=32
 #SBATCH --mem-per-cpu=12G
 #SBATCH --output=logs/orbit_daily_l2_%j.out
 #SBATCH --error=logs/orbit_daily_l2_%j.err

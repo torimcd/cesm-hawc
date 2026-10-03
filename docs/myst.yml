@@ -1,0 +1,50 @@
+# Jupyter Book 2 (MyST) configuration for the cesm-hawc documentation.
+# Build locally from this directory with:  jupyter book start   (live preview)
+#                                         jupyter book build --html
+version: 1
+project:
+  title: cesm-hawc
+  description: Feed CESM2/WACCM output into the HAWC ALI limb imager simulator.
+  authors:
+    - name: Victoria McDonald
+  github: https://github.com/torimcd/cesm-hawc
+  license: MIT
+  keywords:
+    - CESM
+    - WACCM
+    - stratospheric aerosol
+    - limb scattering
+    - HAWC
+    - ALI
+  toc:
+    - file: index.md
+    - title: Getting started
+      children:
+        - file: installation.md
+        - file: quickstart.md
+    - title: User guide
+      children:
+        - file: user-guide/run-modes.md
+        - file: user-guide/configuration.md
+        - file: user-guide/outputs.md
+        - file: user-guide/saved-inputs.md
+        - file: user-guide/hpc.md
+    - title: Input data
+      children:
+        - file: waccm_variables.md
+        - file: inputs/orbit-files.md
+    - title: Background
+      children:
+        - file: background/methods.md
+        - file: hawc_simulator_overview.md
+    - title: Reference
+      children:
+        - file: reference/api.md
+        - file: reference/citing.md
+        - file: reference/changelog.md
+        - file: reference/development.md
+site:
+  template: book-theme
+  options:
+    logo_text: cesm-hawc
+    hide_authors: true

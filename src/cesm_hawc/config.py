@@ -17,18 +17,10 @@ call sites never need to remember to do it themselves.
 from __future__ import annotations
 
 import os
-import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ImportError:
-        sys.exit("Python < 3.11 requires tomli: pip install tomli")
 
 
 class ConfigError(Exception):

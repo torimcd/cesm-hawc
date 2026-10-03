@@ -1,4 +1,4 @@
-# WACCM output variables for cesm-hawc-ali
+# WACCM output variables
 
 ## Required variables
 

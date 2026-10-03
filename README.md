@@ -14,19 +14,19 @@ package:
 3. Runs the `IdealALISimulator` forward model + L2 retrieval
 4. Outputs retrieved aerosol extinction and median radius profiles
 
-It has two tiers:
+Requires Python >=3.11. It has two tiers:
 
-- **Base** (`pip install cesm-hawc`, Python >=3.10) — WACCM column
-  extraction and saving simulator/L2 inputs at monthly or daily scale.
-  Only needs numpy/xarray/scipy/pandas.
-- **`[sim]` extra** (`pip install cesm-hawc[sim]`, Python >=3.11) — the
-  full forward model and L2 retrieval, via `hawcsimulator` + `sasktran2`.
+- **Base** (`pip install cesm-hawc`) — WACCM column extraction and saving
+  simulator/L2 inputs at monthly or daily scale. Only needs
+  numpy/xarray/scipy/pandas.
+- **`[sim]` extra** (`pip install cesm-hawc[sim]`) — the full forward model
+  and L2 retrieval, via `hawcsimulator` + `sasktran2`.
 
 ## Install
 
 ```bash
 pip install cesm-hawc          # base tier
-pip install cesm-hawc[sim]     # + full simulator (requires Python >=3.11)
+pip install cesm-hawc[sim]     # + full simulator
 ```
 
 **From source (development):**

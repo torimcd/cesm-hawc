@@ -42,7 +42,6 @@ def _require_sim_deps() -> None:
         sys.exit(
             "The 'run' command requires the [sim] extra:\n"
             "    pip install cesm-hawc[sim]\n"
-            "(requires Python >=3.11)\n"
         )
 
 

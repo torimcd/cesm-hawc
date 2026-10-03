@@ -3,13 +3,6 @@ cesm_hawc.convergence
 ======================
 L2 retrieval convergence diagnostics.
 
-skretrieval's l2 ``xr.Dataset`` carries no reliable convergence flag in its
-``.attrs``. The trustworthy source is ``scipy.optimize.least_squares``'
-``verbose=2`` stdout — confirmed against real production output, where a
-genuine non-convergence was caught this way that a naive attrs-based check
-missed entirely. Capture stdout during the retrieval call (e.g. via
-``contextlib.redirect_stdout``) and parse it with
-``parse_scipy_convergence()``.
 """
 
 from __future__ import annotations

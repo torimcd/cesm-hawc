@@ -629,7 +629,7 @@ def _run_orbit_daily_case_day(sim_date_str: str, observations: list[dict],
     from cesm_hawc.waccm import WACCMAtmosphere
 
     # Re-applies the calibration-database race patch inside this worker
-    # process -- configure_environment() in the main process (see cli.main())
+    # process. configure_environment() in the main process (see cli.main())
     # isn't guaranteed to reach worker processes depending on the
     # multiprocessing start method. Idempotent, cheap to call again.
     configure_environment()
@@ -779,7 +779,7 @@ def _run_orbit_track(cfg: CesmHawcConfig, out_dir_override, n_workers_override,
     h2_case_name = case_name_override or o.case_name
     strip_ozone = strip_ozone_override or o.strip_ozone
     # An ozone-stripped run reads the SAME case's h2 files as a normal run
-    # of h2_case_name, so it must not share that run's output path -- write
+    # of h2_case_name, so it must not share that run's output path. Write
     # to a "_no_ozone"-suffixed case folder instead of overwriting/resuming
     # into the real case's output.
     output_case_name = f"{h2_case_name}_no_ozone" if strip_ozone else h2_case_name
@@ -844,7 +844,6 @@ def _run_orbit_file(orbit_path: str, h2_bg_path: str, h2_inj_path: str | None,
     from cesm_hawc.noise import default_noise_model
     from cesm_hawc.waccm import WACCMAtmosphere
 
-    # See the matching comment in _run_orbit_daily_case_day.
     configure_environment()
 
     orbit_name = os.path.splitext(os.path.basename(orbit_path))[0]

@@ -13,8 +13,7 @@ The IdealALISimulator uses a Hamilton DAG. The atmosphere step
 
 and then merges whatever is in the ``constituents`` dict on top. This module
 provides ``build_waccm_constituents()`` which returns a dict containing WACCM
-O3, NO2, and bimodal MAM4 sulfate aerosol -- enough to represent the
-atmospheric state.
+O3, NO2, and bimodal MAM4 sulfate aerosol.
 
 Usage
 -----
@@ -28,7 +27,7 @@ Pass the returned dict to ``simulator.run()`` via the ``constituents`` key::
         {**sim_input, "constituents": constituents},
     )
 
-Do **not** wrap it in ``Atmosphere(constituents=...)`` -- that bypasses the
+Do **not** wrap it in ``Atmosphere(constituents=...)`` as that bypasses the
 Hamilton DAG and the aerosol will be silently dropped.
 
 Extinction calculation
@@ -49,7 +48,7 @@ databases here ensures the extinction magnitude reflects the actual size
 distribution width of each mode, since sasktran2 builds xs_total as a
 distribution-weighted sum over per-particle Mie cross-sections
 (see sasktran2/mie/distribution.py), i.e. the lognormal integration is done
-correctly inside sasktran2 for whatever mode_width is specified -- we just
+correctly inside sasktran2 for whatever mode_width is specified, we just
 need to specify the right one per mode, which the shared aliprocessing
 database does not.
 """
@@ -64,34 +63,7 @@ except ImportError as e:
     raise ImportError("sasktran2 must be installed: pip install cesm-hawc[sim]") from e
 
 
-# ── Mode-specific Mie databases ─────────────────────────────────────────────
-# Previously this module used aliprocessing.l2.optical.aerosol_median_radius_db(),
-# a single shared database built with a fixed mode_width=1.6 -- correct for
-# the accumulation mode (sigma_g = 1.6) only by coincidence, and not correct
-# for the coarse mode (sigma_g = 1.2). Still built explicitly per mode below
-# rather than relying on that coincidence, since it doesn't hold for coarse.
-#
-# ExtinctionScatterer derives its behavior ENTIRELY from whatever
-# optical_property object it's given (see
-# sasktran2/constituent/numdenscatterer.py ExtinctionScatterer._update_numberdensity):
-# it queries that object's cross_sections() at the reference wavelength to
-# convert our supplied extinction into an implied number density, and the
-# RT solver later queries the SAME object at every other wavelength for
-# both extinction and phase function. So there's no separate "reference"
-# vs "other wavelength" logic to patch -- using a mode-width-matched
-# database as the optical_property fixes extinction AND phase function
-# consistency at every wavelength, not just the 745 nm reference point.
-#
-# Our databases are built via the identical sk.database.MieDatabase(...)
-# constructor aerosol_median_radius_db() uses (same class, same dataset
-# structure: xs_total, p11, p12, p33, lm_a1-b2, etc.) -- just with the
-# correct mode_width per mode -- so they're drop-in compatible as
-# ExtinctionScatterer's optical_property argument.
 _MODE_WIDTHS = {"aerosol_accum": 1.6, "aerosol_coarse": 1.2}
-# Wavelength grid for the TRUTH-atmosphere mode-matched Mie databases (built by
-# _get_mode_db() below, used by ExtinctionScatterer to represent the *simulated*
-# aerosol -- not to be confused with aliprocessing's own separate, single-mode
-# retrieval-side database).
 _WAVELENGTHS_NM = np.array([470, 525, 745, 869, 1020, 1230, 1450, 1500, 1560,
                              1750, 2000, 2250, 2500])
 _MEDIAN_RADIUS_NM = np.arange(10, 600, 10.0)
@@ -317,7 +289,7 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
             )
             ext_multi_safe = np.where(r_nm_raw[None, :] < r_min, 0.0, ext_multi)
             true_extinction[f"{name}_extinction_per_m"] = ext_multi_safe
-            # same values just passed to ExtinctionScatterer above -- exposed
+            # same values just passed to ExtinctionScatterer above,
             # so a saved column can be turned back into an equivalent
             # ExtinctionScatterer without re-deriving them from N/r.
             true_extinction[f"{name}_reference_extinction_per_m"] = ext_ref_safe

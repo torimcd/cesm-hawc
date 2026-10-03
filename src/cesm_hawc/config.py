@@ -1,7 +1,7 @@
 """
 cesm_hawc.config
 =================
-Typed config.toml schema, replacing raw ``tomllib.load()`` + dict indexing.
+Typed config.toml schema.
 
 Copy ``config.example.toml`` to ``config.toml`` at the project root and fill
 in your paths, then::
@@ -84,17 +84,16 @@ class OrbitConfig:
     """``[orbit]`` — orbit-track runs (``cesm-hawc run --mode orbit-track``):
     a real HAWC orbit-track file set matched to one CESM case's h2
     files by day-of-year offset from ``orbit_epoch``, optionally with full
-    L2 retrieval. One case per run (``case_name``) -- run it once per case
-    (background or injection) you need output for.
+    L2 retrieval. One case per run (``case_name``).
 
     ``h2_cadence``: ``"daily"`` (default) assumes one h2 file per calendar
     date. ``"subdaily"`` is for h2 output written more than once per day
-    (e.g. 12-hourly) -- one job is dispatched per h2 *file* rather than per
+    (e.g. 12-hourly); one job is dispatched per h2 *file* rather than per
     day, with each observation assigned to whichever h2 snapshot is nearest
     to it in real elapsed time (not a fixed clock-time split), so this also
     correctly handles an observation near midnight being closer to the next
     day's snapshot than to the current day's own. Do not use ``"daily"``
-    with more than one h2 file per date -- ``index_by_date`` silently keeps
+    with more than one h2 file per date since ``index_by_date`` silently keeps
     only one of them.
     """
     out_dir: str

@@ -33,23 +33,6 @@ def patch_calibration_database_race() -> None:
     disk, skip the rewrite and trust it. Safe because the cache content only
     depends on the ``(name, version)`` pair, which is fixed per run.
 
-    Two separate bindings need patching: the ``calibration`` module
-    attribute itself, *and* the name ``IdealALISimulator``'s
-    ``_initialize_data()`` actually looks up — it did
-    ``from hawcsimulator.ali.calibration import calibration_database`` at
-    its own import time, binding a separate name inside
-    ``ideal_dolp_imager``'s module namespace that still points at the
-    original function. Patching only the first has no effect on simulator
-    construction.
-
-    Note: ``ideal_dolp_imager`` calls ``calibration_database("ideal_spectrograph",
-    "v1")`` internally too -- both configurations share the same calibration
-    dataset name/version; that string is a dataset identifier, unrelated to
-    which simulator class is actually constructed. See ``cesm_hawc.simulation``
-    for why ``ideal_dolp_imager`` is the one in use.
-
-    Idempotent and safe to call more than once (e.g. once in the main
-    process before dispatch, and again per worker).
     """
     global _patched
     if _patched:
@@ -98,25 +81,6 @@ def warm_retrieval_optical_database() -> None:
     Pre-build ``aliprocessing``'s own retrieval-side Mie database
     (``aerosol_median_radius_db()``) once, serially, in the main process
     before dispatching worker processes.
-
-    ``ideal_dolp_imager._initialize_data()`` calls ``aerosol_median_radius_db()``
-    every time an ``IdealALISimulator`` is constructed -- once per worker
-    job. This is a *different* cache from the ones the other two warm_*
-    functions handle: ``warm_calibration_database`` covers hawcsimulator's
-    calibration .nc, and ``cesm_hawc.constituents.warm_mode_databases``
-    covers the mode-matched (accum/coarse) databases used for the
-    *simulated* atmosphere. This one is the retrieval's own single-mode
-    optical property assumption, built by ``aliprocessing``/``sasktran2``
-    and cached by its own (wavelength grid, mode width, refractive index)
-    key. If that key hasn't been built yet -- e.g. right after upgrading
-    ``aliprocessing`` to a version with a different wavelength grid, which
-    changes the cache key -- every worker process constructing its first
-    ``IdealALISimulator`` simultaneously races to build it, and a worker
-    can read a still-being-written file. That surfaces as ``ValueError:
-    did not find a match in any of xarray's currently installed IO
-    backends`` (an incomplete file doesn't look like valid NetCDF to
-    xarray's format sniffing) rather than a clear cache/race error,
-    on every single job in the run.
     """
     try:
         from aliprocessing.l2.optical import aerosol_median_radius_db

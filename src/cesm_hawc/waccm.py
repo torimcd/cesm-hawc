@@ -7,7 +7,7 @@ profiles for use with the HAWC ALI simulator.
 Notes
 -----
 Tested with BWSSP245 / TSMLT compsets using MAM4 aerosol. The following
-variables must be present in the h0 file (add to fincl in user_nl_cam):
+variables must be present in the history file (add to fincl in user_nl_cam):
 
     T, Q, PS, hyam, hybm        -- state
     O3, NO2, H2O, SO2           -- gas chemistry (mol/mol)
@@ -17,7 +17,7 @@ variables must be present in the h0 file (add to fincl in user_nl_cam):
 MAM4 mode sigma_g values (WACCM/BWSSP245)
 ------------------------------------------
     Accumulation (_a1): sigma_g = 1.6   (Mills et al. 2016)
-    Coarse (_a3):       sigma_g = 1.2   ← WACCM-specific (Mills et al. 2016)
+    Coarse (_a3):       sigma_g = 1.2   (Mills et al. 2016)
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def mam4_lognormal(so4_mmr: np.ndarray, num_per_kg: np.ndarray,
 class WACCMAtmosphere:
     """
     Read a CESM2/WACCM CAM history NetCDF file and extract single-column
-    atmospheric profiles for the HAWC ALI simulator.
+    atmospheric profiles for the HAWC simulator.
 
     Parameters
     ----------
@@ -240,10 +240,10 @@ class WACCMAtmosphere:
         ----------
         lat        : float  target latitude [degrees], nearest-neighbour
         lon        : float  target longitude [degrees], nearest-neighbour.
-                     Accepts either -180/180 or 0/360 convention -- always
+                     Accepts either -180/180 or 0/360 convention. Always
                      normalized to 0/360 internally before selection, since
                      CESM/CAM history files store lon on a 0/360 grid (e.g.
-                     [0.0, 1.25, ..., 358.75]). See CONFIRMED BUG note below.
+                     [0.0, 1.25, ..., 358.75]).
         time_index : int    time slice index (0-based)
 
         Returns
@@ -266,25 +266,8 @@ class WACCMAtmosphere:
         sulfate_a3_r_um     [μm]     coarse mode median radius
         sulfate_a3_sigma    float    1.2 (scalar, WACCM-specific)
 
-        CONFIRMED BUG (fixed here): this file's `lon` coordinate spans
-        [0.0, 358.75] (confirmed directly against real h2 output), but
-        callers throughout this pipeline (cesm_hawc.orbit_files'
-        extract_observations(), which reads longitude straight from
-        orbit_*.nc with no conversion) pass longitude in -180/180
-        convention. `.sel(lon=..., method="nearest")` against a 0-360
-        coordinate array is NOT circular -- for any negative target down
-        to about -179, distance-to-0.0 is smaller than distance-to-358.75,
-        so EVERY negative longitude silently snapped to the same lon=0.0
-        column regardless of its actual value. Confirmed directly: seven
-        different requested longitudes spanning -156.7 to -16.1 all
-        returned bit-identical profiles for every single field (pressure,
-        temperature, O3, SO2, both sulfate modes). This affected every
-        truth extinction value computed anywhere in this pipeline for any
-        orbit observation with negative longitude -- roughly half of all
-        global samples -- silently substituting the real column with
-        whatever's at lon=0.0 instead.
         """
-        lon = lon % 360.0  # normalize to [0, 360) -- see CONFIRMED BUG above
+        lon = lon % 360.0  # normalize to [0, 360)
         col  = self.ds.isel(time=time_index).sel(lat=lat, lon=lon, method="nearest")
         p0   = self._p0()
         ps   = float(col["PS"].values)

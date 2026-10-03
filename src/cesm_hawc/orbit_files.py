@@ -129,19 +129,6 @@ def extract_observations(
     calendar date with ``sim_date`` while keeping the real time-of-day and
     real satellite geometry.
 
-    The per-file sampling phase is ROTATED across a day's files rather than
-    reset to the same starting offset every time. These are sun-synchronous
-    orbits and each file is close to one real revolution, so every file's
-    daytime arc sits at nearly the same relative position within it;
-    resetting the cadence phase to 0 for every file means the SAME few
-    points on that arc get re-sampled over and over. Confirmed empirically
-    on real production data: cadence_s=720 at a fixed center_pixel collapsed
-    45 daytime observations for one real day down to just 3 distinct
-    latitudes, repeated 15 times each (one real orbit file each) -- rotating
-    the phase spread that same real day's daytime observations across 57
-    distinct latitudes from -82.8 to +58.4 degrees, at essentially the same
-    total observation count and cadence.
-
     Returns a list of dicts: ``{time, lat, lon, observer_lat, observer_lon,
     observer_alt}``.
     """
@@ -153,7 +140,7 @@ def extract_observations(
 
     for file_idx, f in enumerate(files_sorted):
         # decode_times=False: "time" is treated as raw integer seconds since
-        # `epoch` below, not as an absolute CF-decoded datetime -- whether
+        # `epoch` below, not as an absolute CF-decoded datetime. Whether
         # xarray auto-decodes this variable depends on exactly which time
         # attrs happen to be present on a given orbit file, so this must be
         # explicit rather than relying on the file's own metadata.
@@ -170,9 +157,9 @@ def extract_observations(
         if n == 0:
             continue
 
-        # Rotate this file's starting phase instead of always starting at 0
-        # -- see docstring above. Vectorized (index arithmetic instead of a
-        # per-sample Python loop) since this now runs once per file per
+        # Rotate this file's starting phase instead of always starting at 0.
+        # Vectorized (index arithmetic instead of a per-sample
+        # Python loop) since this now runs once per file per
         # simulated date across a full production run.
         phase_shift = (file_idx * cadence_s / n_files) % cadence_s
         first_idx = int(round(phase_shift))
@@ -211,8 +198,7 @@ def l1b_image_to_dataset(l1b, wavelengths_nm, true_extinction: dict | None = Non
     comparison against radiance/dolp. The dict's other, per-altitude-only
     entries (``{name}_reference_extinction_per_m``, ``{name}_median_radius_nm``,
     ``extinction_wavelength_nm``) aren't wavelength-resolved and are skipped
-    here -- they're for reconstructing constituents (see
-    ``cesm_hawc.save_inputs``), not for this dataset.
+    here.
     """
     I_ds = l1b.spectra["I"].ds
     dolp_ds = l1b.spectra["dolp"].ds

@@ -3,7 +3,7 @@ cesm_hawc.env
 =============
 Explicit, opt-in setup for process-wide state needed by the simulation
 ([sim] extra) code paths. Nothing in ``cesm_hawc`` mutates global state on
-``import`` — call ``configure_environment()`` yourself before running your
+``import``. Call ``configure_environment()`` yourself before running your
 own orbit/batch scripts, or use the ``cesm-hawc`` CLI, which calls it once
 at startup automatically.
 

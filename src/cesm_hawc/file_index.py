@@ -2,9 +2,7 @@
 cesm_hawc.file_index
 =====================
 Generic date/timestamp-based file indexing over a directory of CESM/WACCM
-history files (h0 monthly, h1 hourly, h2 daily — all share the same
-``*.cam.hN.<date>[-<seconds>].nc`` naming convention, just with different
-date granularity).
+history files (h0 monthly, h1 hourly, h2 daily).
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ def index_by_date(directory: str, pattern: str) -> dict[str, str]:
     """Return ``{"YYYY-MM-DD": filepath}`` for daily (h2) files in a
     directory, matching the ``*.cam.h2.YYYY-MM-DD-SSSSS.nc`` convention.
 
-    Collapses to one file per calendar date -- if a directory holds more
+    Collapses to one file per calendar date. If a directory holds more
     than one file for the same date (e.g. 12-hourly output, two files per
     day), only the last one in sorted order survives; the rest are
     silently dropped. Fine for genuinely-daily output; use
@@ -67,7 +65,7 @@ def index_by_date(directory: str, pattern: str) -> dict[str, str]:
 def index_by_timestamp(directory: str, pattern: str) -> dict[pd.Timestamp, str]:
     """Return ``{timestamp: filepath}`` for every file matching the
     ``*.cam.hN.YYYY-MM-DD-SSSSS.nc`` convention, one entry per distinct
-    (date, seconds-of-day) -- unlike ``index_by_date``, nothing is
+    (date, seconds-of-day). Unlike ``index_by_date``, nothing is
     collapsed when a directory holds more than one file per calendar date
     (e.g. 12-hourly output: ``...-00000.nc`` and ``...-43200.nc`` both
     survive as separate keys)."""

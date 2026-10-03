@@ -7,9 +7,8 @@ Save a WACCM column as a simulator-ready input file.
 fields as ``WACCMAtmosphere.save_column_profiles()``. When ``sasktran2``
 is importable, it additionally saves the constituents-level data an
 external ``hawcsimulator``/``sasktran2`` user needs to reconstruct the
-simulator's aerosol/gas constituent objects directly -- without calling
-back into this package at all. See the README's "Consuming saved inputs
-externally" section for a complete example.
+simulator's aerosol/gas constituent objects directly. See the README's 
+"Consuming saved inputs externally" section for a complete example.
 """
 
 from __future__ import annotations
@@ -53,30 +52,6 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         Not saved if omitted (e.g. `single`/`batch` modes without a real
         per-observation time).
 
-    Notes
-    -----
-    Always saves the WACCM profile fields (same shape as
-    ``WACCMAtmosphere.save_column_profiles()``). If
-    ``cesm_hawc.constituents`` imports successfully (``sasktran2``
-    present), also saves, per mode (``aerosol_accum``, ``aerosol_coarse``):
-
-    - ``{mode}_extinction_per_m``            [wavelength_nm, altitude_m]  truth extinction
-    - ``{mode}_reference_extinction_per_m``  [altitude_m]  745 nm reference extinction
-    - ``{mode}_median_radius_nm``            [altitude_m]  clipped median radius
-
-    plus attrs describing exactly how to rebuild an equivalent Mie
-    database from raw ``sasktran2`` calls (``mie_refractive_index``,
-    ``mie_wavelength_grid_nm``, ``mie_median_radius_grid_nm``,
-    ``mode_width_accum``, ``mode_width_coarse``,
-    ``extinction_reference_wavelength_nm``) -- an external
-    ``hawcsimulator``/``sasktran2`` user can reconstruct
-    ``sk.constituent.ExtinctionScatterer``/``VMRAltitudeAbsorber`` objects
-    from these fields with no ``cesm_hawc`` import at all. The file's
-    ``includes_constituents`` attr records which shape it has.
-
-    Falls back to profiles-only (``includes_constituents=False``) when
-    ``sasktran2`` isn't importable -- this function never itself requires
-    the ``[sim]`` extra.
     """
     profiles = waccm.get_column_profiles(lat, lon, time_index)
 
@@ -111,7 +86,7 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         else:
             _constituents_available = True
 
-    # NetCDF attrs can't hold a Python bool -- store as int 0/1.
+    # NetCDF attrs can't hold a Python bool; store as int 0/1.
     attrs["includes_constituents"] = int(_constituents_available)
 
     if _constituents_available:

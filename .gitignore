@@ -219,3 +219,4 @@ quickstart_output/
 
 # Claude Code local settings
 .claude/
+.vscode/

@@ -1,10 +1,4 @@
-"""
-cesm_hawc.dispatch
-===================
-Generic resumable worker-pool dispatch, shared by every batch/orbit CLI
-mode. Runs serially when ``n_workers <= 1`` (useful for debugging), else
-via ``ProcessPoolExecutor``.
-"""
+"""Run independent jobs serially or across a pool of worker processes."""
 
 from __future__ import annotations
 
@@ -23,29 +17,45 @@ def run_jobs(
     max_tasks_per_child: int | None = None,
     on_result: Callable[[object], None] | None = None,
 ) -> list:
-    """
-    Run ``fn(*job)`` for each ``job`` in ``jobs``, serially if
-    ``n_workers <= 1`` else across a ``ProcessPoolExecutor`` with up to
-    ``min(n_workers, len(jobs))`` workers.
+    """Run ``fn(*job)`` for every job, serially or in parallel.
 
-    ``max_tasks_per_child`` recycles each worker process after that many
-    jobs, bounding per-worker memory growth from state that isn't released
-    between jobs (e.g. an unclosed xarray file handle) — set it to ``1`` for
-    jobs known to leak significant memory per call.
+    Parameters
+    ----------
+    fn : callable
+        Job function. Must be defined at module level so it can be pickled
+        for worker processes.
+    jobs : list of tuple
+        Positional arguments for each call of ``fn``.
+    n_workers : int
+        Number of worker processes. ``1`` or less runs the jobs serially in
+        this process, which is easiest to debug; otherwise up to
+        ``min(n_workers, len(jobs))`` processes are used.
+    max_tasks_per_child : int, optional
+        Replace each worker process after this many jobs, which limits memory
+        growth from state not released between jobs. Use ``1`` for jobs known
+        to leak memory. Default: workers are never replaced.
+    on_result : callable, optional
+        Called with each result as it completes, e.g. for progress logging.
 
-    ``on_result`` (optional) is called with each result as it completes, for
-    progress logging. Every result is still collected and returned in
-    completion order (not necessarily job order) when running in parallel.
+    Returns
+    -------
+    list
+        The result of every job. In parallel runs they are in completion
+        order, not job order.
 
-    Callers are expected to follow the ``"OK ..."``/``"FAIL ..."`` status
-    string convention (or return whatever their own result type is) — this
-    function is agnostic to the result shape.
+    Raises
+    ------
+    concurrent.futures.process.BrokenProcessPool
+        If a worker process is killed abruptly (e.g. out of memory). The
+        whole pool is lost, including jobs still in progress; output already
+        written by finished jobs is unaffected, so resumable job functions
+        can continue when the same job list is re-run.
 
-    If a worker is killed abruptly (e.g. OOM), the whole
-    ``ProcessPoolExecutor`` is poisoned and every other in-progress job is
-    abandoned too, even ones that would have succeeded. Anything already
-    written to disk by completed jobs is unaffected; re-running the same
-    job list with resumable per-job logic picks up where it left off.
+    Notes
+    -----
+    cesm-hawc's job functions return a status string starting with
+    ``"OK"`` or ``"FAIL"``, but this function doesn't depend on the result
+    type.
     """
     results: list = []
 

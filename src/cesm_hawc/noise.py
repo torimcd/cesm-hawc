@@ -1,22 +1,28 @@
-"""
-cesm_hawc.noise
-================
-The ALI simulator's noise model, standardized to one construction site.
+"""The ALI instrument noise model used throughout cesm-hawc.
 
-``straylight_fraction`` is always hardcoded to 0.0 here, it is not a
-config.toml option and should not be constructed ad hoc elsewhere. Every
-caller in this package uses ``default_noise_model()`` instead of
-instantiating ``ALINoiseModel`` directly.
+Every caller in this package uses :func:`default_noise_model` rather than
+constructing ``hawcsimulator.noise.ALINoiseModel`` directly, so the noise
+settings are defined in one place.
 """
 
 from __future__ import annotations
 
 
 def default_noise_model():
-    """Return the project's standard ``ALINoiseModel``.
+    """Return the ``ALINoiseModel`` used for every cesm-hawc simulation.
 
-    ``straylight_fraction=0.0`` is a fixed constant, not a tunable
-    parameter — do not read it from config or expose it as a CLI flag.
+    Returns
+    -------
+    hawcsimulator.noise.ALINoiseModel
+        Noise model with ``straylight_fraction=0.0`` and the
+        ``hawcsimulator`` defaults for every other setting.
+
+    Notes
+    -----
+    ``straylight_fraction`` is fixed at 0.0. It is deliberately not a
+    config option or CLI flag.
+
+    The model is not seeded, so repeated runs draw different noise.
     """
     from hawcsimulator.noise import ALINoiseModel
 

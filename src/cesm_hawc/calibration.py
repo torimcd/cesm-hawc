@@ -1,9 +1,10 @@
-"""
-cesm_hawc.calibration
-======================
-Workarounds for ``hawcsimulator``'s calibration-database cache, needed only
-when running many simulations in parallel or in a batch. Requires
-``hawcsimulator`` ([sim] extra).
+"""Workarounds for cache races when many simulations run in parallel.
+
+``hawcsimulator`` and ``aliprocessing`` build cached files the first time a
+simulator is constructed. When many worker processes start at once, they
+race to write those files. The functions here pre-build the caches once in
+the main process and stop ``hawcsimulator`` rewriting its calibration file
+on every call. They do nothing if the ``[sim]`` extra isn't installed.
 """
 
 from __future__ import annotations
@@ -17,22 +18,24 @@ _patched = False
 
 
 def _cache_file_path(name: str, version: str) -> str:
+    """Path of ``hawcsimulator``'s cached calibration file for ``(name, version)``."""
     cache_dir = os.path.expanduser("~/.local/share/hawc-simulator/ali/calibration")
     return os.path.join(cache_dir, f"{name}_{version}.nc")
 
 
 def patch_calibration_database_race() -> None:
-    """
-    ``hawcsimulator``'s ``calibration_database()`` unconditionally rewrites
-    its cached .nc file (``clobber=True``) every time it's called, including
-    internally whenever an ``IdealALISimulator`` is constructed. Under many
-    worker processes hitting the same (often NFS-mounted) cache file
-    concurrently, this produces ``PermissionError``/``KeyError`` races.
+    """Stop ``hawcsimulator`` rewriting its calibration cache on every call.
 
-    This patches it to be idempotent: if the cache file already exists on
-    disk, skip the rewrite and trust it. Safe because the cache content only
-    depends on the ``(name, version)`` pair, which is fixed per run.
+    ``hawcsimulator``'s ``calibration_database()`` rewrites its cached NetCDF
+    file every time it is called, including whenever an
+    ``IdealALISimulator`` is constructed. With many worker processes using
+    the same (often network-mounted) file, this causes ``PermissionError``
+    and ``KeyError`` races. After patching, an existing cache file is reused
+    instead. This is safe because the file's contents depend only on its
+    ``(name, version)``.
 
+    Safe to call more than once; does nothing if ``hawcsimulator`` isn't
+    installed. :func:`cesm_hawc.configure_environment` calls it for you.
     """
     global _patched
     if _patched:
@@ -59,12 +62,17 @@ def patch_calibration_database_race() -> None:
 
 
 def warm_calibration_database(name: str = "ideal_spectrograph", version: str = "v1") -> None:
-    """
-    Pre-build the calibration database once, serially, in the main process
-    before dispatching worker processes. If ``n_workers > 1`` and all
-    workers start simultaneously, they otherwise race to create the cache
-    file, causing ``PermissionError`` on shared filesystems for all but the
-    first.
+    """Build ``hawcsimulator``'s calibration cache file once.
+
+    Call this in the main process before starting worker processes, so they
+    don't all race to create the file. Failures are logged as warnings, not
+    raised.
+
+    Parameters
+    ----------
+    name, version : str, optional
+        Calibration dataset to build. The defaults are the dataset the
+        ``ideal_dolp_imager`` simulator uses.
     """
     try:
         from hawcsimulator.ali.calibration import calibration_database
@@ -77,10 +85,14 @@ def warm_calibration_database(name: str = "ideal_spectrograph", version: str = "
 
 
 def warm_retrieval_optical_database() -> None:
-    """
-    Pre-build ``aliprocessing``'s own retrieval-side Mie database
-    (``aerosol_median_radius_db()``) once, serially, in the main process
-    before dispatching worker processes.
+    """Build the retrieval's Mie database cache once.
+
+    Every ``IdealALISimulator`` builds ``aliprocessing``'s
+    ``aerosol_median_radius_db()`` when constructed. Call this in the main
+    process before starting worker processes, so they don't race to write
+    it (a worker reading a half-written file fails with an xarray "did not
+    find a match in any of xarray's currently installed IO backends"
+    error). Failures are logged as warnings, not raised.
     """
     try:
         from aliprocessing.l2.optical import aerosol_median_radius_db

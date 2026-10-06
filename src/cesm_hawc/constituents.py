@@ -1,56 +1,26 @@
-"""
-cesm_hawc.constituents
-======================
-Build the sasktran2 constituents dict that the HAWC ALI simulator needs.
+"""Build the ``sasktran2`` constituents that represent a WACCM column.
 
-The IdealALISimulator uses a Hamilton DAG. The atmosphere step
-(``hawcsimulator.steps.atmosphere.atmosphere__default``) starts from:
-
-    - Rayleigh scattering
-    - MIPAS O3 climatology
-    - Solar irradiance
-    - Lambertian surface albedo (0.3)
-
-and then merges whatever is in the ``constituents`` dict on top. This module
-provides ``build_waccm_constituents()`` which returns a dict containing WACCM
-O3, NO2, and bimodal MAM4 sulfate aerosol.
-
-Usage
------
-Pass the returned dict to ``simulator.run()`` via the ``constituents`` key::
-
-    from cesm_hawc.constituents import build_waccm_constituents
+``hawcsimulator``'s default atmosphere contains Rayleigh scattering, MIPAS
+climatological ozone, solar irradiance and a Lambertian surface with albedo
+0.3. :func:`build_waccm_constituents` returns WACCM ozone (replacing the
+MIPAS ozone), WACCM NO2 and the two MAM4 sulfate modes, to be passed to
+``simulator.run()`` under the ``constituents`` key::
 
     constituents = build_waccm_constituents(profiles, alt_grid_m)
-    data = simulator.run(
-        ["l2", "sk2_atmosphere"],
-        {**sim_input, "constituents": constituents},
-    )
+    data = simulator.run(products, {**sim_input, "constituents": constituents})
 
-Do **not** wrap it in ``Atmosphere(constituents=...)`` as that bypasses the
-Hamilton DAG and the aerosol will be silently dropped.
+Do not wrap the dict in ``Atmosphere(constituents=...)``: that bypasses the
+simulator's atmosphere step and the aerosol is silently dropped.
 
-Extinction calculation
------------------------
-Extinction is computed from each level's number density and lognormal
-median radius using ``xs_total`` (total cross section, [m^2]) from a
-sasktran2 MieDatabase built with the CORRECT mode_width (geometric standard
-deviation, sigma_g) for each MAM4 mode:
+Each sulfate mode is an ``ExtinctionScatterer`` backed by its own Mie
+database, built for a lognormal size distribution with that mode's width
+(``sigma_g`` = 1.6 for accumulation, 1.2 for coarse) and the H2SO4
+refractive index. ``sasktran2`` integrates over the size distribution, and
+the same database supplies extinction and phase function at every
+wavelength. The L2 retrieval separately assumes a single mode with
+``sigma_g`` = 1.6, via ``aliprocessing.l2.optical.aerosol_median_radius_db``.
 
-    - aerosol_accum  (so4_a1, sigma_g = 1.6)
-    - aerosol_coarse (so4_a3, sigma_g = 1.2)
-
-This is distinct from ``aliprocessing.l2.optical.aerosol_median_radius_db()``,
-which is still used for phase-function matching in ``ExtinctionScatterer``,
-but which bakes in a single fixed mode_width=1.6 for its extinction
-calculation, which is correct for accumulation mde but not coarse mode. Using the mode-matched
-databases here ensures the extinction magnitude reflects the actual size
-distribution width of each mode, since sasktran2 builds xs_total as a
-distribution-weighted sum over per-particle Mie cross-sections
-(see sasktran2/mie/distribution.py), i.e. the lognormal integration is done
-correctly inside sasktran2 for whatever mode_width is specified, we just
-need to specify the right one per mode, which the shared aliprocessing
-database does not.
+Requires the ``[sim]`` extra.
 """
 
 from __future__ import annotations
@@ -72,17 +42,12 @@ _mode_dbs: dict = {}
 
 
 def _get_mode_db(mode_width: float):
-    """
-    Lazily build (and cache in-process) a MieDatabase for a given
-    mode_width. Building triggers a real Mie calculation the first time it's
-    called for a given mode_width; sasktran2's MieDatabase caches the result
-    to disk internally, and this dict caches the in-memory handle to avoid
-    rebuilding within a single process.
+    """Build, or return the cached, Mie database for one mode width.
 
-    Applies the same single-scattering-albedo clamp
-    (ssa >= 1 -> 0.99999, then xs_scattering recomputed to match) that
-    aliprocessing.l2.optical.aerosol_median_radius_db() applies to the
-    shared database.
+    The first build runs a Mie calculation, which ``sasktran2`` caches on
+    disk; the in-memory database is also cached for this process. Applies
+    the same single-scattering-albedo clamp as ``aliprocessing`` (values
+    >= 1 set to 0.99999, with ``xs_scattering`` recomputed to match).
     """
     if mode_width not in _mode_dbs:
         refrac = sk.mie.refractive.H2SO4()
@@ -102,25 +67,31 @@ def _get_mode_db(mode_width: float):
 
 
 def get_mode_mie_database(mode_width: float):
-    """
-    Public accessor for the mode-width-matched Mie database (see
-    ``_get_mode_db``), for callers reconstructing an
-    ``sk.constituent.ExtinctionScatterer`` themselves from a saved column's
-    ``{name}_reference_extinction_per_m``/``{name}_median_radius_nm`` fields
-    (see ``cesm_hawc.save_inputs``) rather than calling
-    ``build_waccm_constituents()``. ``mode_width`` is 1.6 for the
-    accumulation mode, 1.2 for the coarse mode (see ``_MODE_WIDTHS``).
+    """Return the Mie database for one sulfate mode.
+
+    Use this to rebuild an ``sk.constituent.ExtinctionScatterer`` yourself
+    from a saved column's ``{mode}_reference_extinction_per_m`` and
+    ``{mode}_median_radius_nm`` (see :mod:`cesm_hawc.save_inputs`).
+
+    Parameters
+    ----------
+    mode_width : float
+        Geometric standard deviation of the mode: 1.6 for accumulation,
+        1.2 for coarse.
+
+    Returns
+    -------
+    sasktran2.database.MieDatabase
+        The database, built on first use.
     """
     return _get_mode_db(mode_width)
 
 
 def warm_mode_databases() -> None:
-    """
-    Pre-build both mode-specific Mie databases once, before any parallel
-    dispatch. Call this from the main process before spawning workers --
-    mirrors the calibration_database pre-warm pattern used elsewhere in
-    this project. Building once, serially, up front avoids relying on
-    unconfirmed concurrent-build safety in sasktran2's MieDatabase.
+    """Build both sulfate-mode Mie databases.
+
+    Call this in the main process before starting worker processes, so the
+    databases are built once rather than concurrently by every worker.
     """
     for mode_width in set(_MODE_WIDTHS.values()):
         _get_mode_db(mode_width)
@@ -129,28 +100,29 @@ def warm_mode_databases() -> None:
 def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
                                mode_width: float,
                                wavelength_nm=745.0) -> np.ndarray:
-    """
-    Convert number density [cm^-3] and lognormal median radius [um] to
-    extinction [m^-1] using the mode-width-matched Mie database's xs_total
-    [m^2] (a distribution-weighted total cross section).
+    """Extinction [m⁻¹] from number density and median radius.
 
-    extinction [m^-1] = N [m^-3] * xs_total [m^2]
+    Computes ``N * xs_total(r, wavelength)``, where ``xs_total`` [m²] is the
+    distribution-weighted total cross-section from the mode's Mie database.
+    Radii are clipped to the database range and wavelengths snap to the
+    nearest database wavelength.
 
     Parameters
     ----------
-    N_cm3         : [cm^-3]  number concentration per altitude level
-    r_um          : [um]     lognormal median radius per altitude level
-    mode_width    : float    geometric standard deviation (sigma_g) of this mode
-    wavelength_nm : float or array-like
-        Wavelength(s) to evaluate xs_total at. A scalar (default 745.0)
-        returns a 1D array [altitude]. An array of wavelengths returns a
-        2D array [wavelength, altitude].
+    N_cm3 : numpy.ndarray
+        Number concentration per level [cm⁻³].
+    r_um : numpy.ndarray
+        Lognormal median radius per level [μm].
+    mode_width : float
+        Geometric standard deviation of the mode.
+    wavelength_nm : float or array-like, optional
+        Wavelength(s) [nm]. Default 745.
 
     Returns
     -------
-    extinction_per_m : np.ndarray
-        [m^-1], shape [altitude] for scalar wavelength_nm, or
-        [wavelength, altitude] for array-like wavelength_nm.
+    numpy.ndarray
+        Extinction [m⁻¹], shape (altitude,) for a scalar wavelength or
+        (wavelength, altitude) for several.
     """
     db = _get_mode_db(mode_width)
     ds = db._database
@@ -170,63 +142,47 @@ def _extinction_from_xs_total(N_cm3: np.ndarray, r_um: np.ndarray,
 def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
                               return_extinction: bool = False,
                               truth_wavelengths_nm=None):
-    """
-    Build the sasktran2 constituents dict from WACCM column profiles.
-
-    This is the primary entry point for feeding CESM/WACCM data into the
-    HAWC ALI simulator. The returned dict should be passed to
-    ``simulator.run()`` via the ``constituents`` key (see module docstring).
+    """Build the ``sasktran2`` constituents for one WACCM column.
 
     Parameters
     ----------
     profiles : dict
-        Output of ``WACCMAtmosphere.get_column_profiles()``.
-    alt_m : np.ndarray
-        Altitude grid [m], must match the ``altitudes_m`` key in profiles
-        and the ``altitude_grid`` key in ``sim_input``.
+        Result of :meth:`cesm_hawc.waccm.WACCMAtmosphere.get_column_profiles`.
+    alt_m : numpy.ndarray
+        Altitude grid [m]; must match ``profiles["altitudes_m"]`` and the
+        simulator's ``altitude_grid``.
     return_extinction : bool, optional
-        If True, also return the true per-mode extinction profiles [m^-1]
-        that were computed. Default False.
+        Also return the truth extinction. Default False.
     truth_wavelengths_nm : array-like, optional
-        Wavelength(s) [nm] to evaluate truth extinction at, when
-        return_extinction=True. Should match the wavelengths the
-        simulator is being run at. Defaults to [745.0] if not given.
+        Wavelengths [nm] for the truth extinction; normally the simulated
+        wavelengths. Default ``[745.0]``.
 
     Returns
     -------
-    dict
-        sasktran2 constituents dict with keys:
-        ``o3``, ``no2``, ``aerosol_accum``, ``aerosol_coarse``.
+    constituents : dict
+        ``o3`` and ``no2`` (``VMRAltitudeAbsorber``) and ``aerosol_accum``
+        and ``aerosol_coarse`` (``ExtinctionScatterer``, from ``so4_a1`` and
+        ``so4_a3``).
+    true_extinction : dict
+        Only if ``return_extinction`` is True. For each mode
+        (``aerosol_accum``, ``aerosol_coarse``):
 
-    dict, optional
-        If ``return_extinction=True``, also returns a second dict with,
-        per mode name (``aerosol_accum``, ``aerosol_coarse``):
+        - ``{mode}_extinction_per_m``: truth extinction [m⁻¹], shape
+          (wavelength, altitude), at ``truth_wavelengths_nm``;
+        - ``{mode}_reference_extinction_per_m``: extinction at 745 nm
+          [m⁻¹], shape (altitude,);
+        - ``{mode}_median_radius_nm``: clipped median radius [nm], shape
+          (altitude,);
 
-        - ``{name}_extinction_per_m``: multi-wavelength truth extinction
-          [m^-1], shape [wavelength, altitude], evaluated at
-          ``truth_wavelengths_nm``.
-        - ``{name}_reference_extinction_per_m``: the 745 nm reference
-          extinction [m^-1], shape [altitude] -- the literal
-          ``extinction_per_m`` argument used to construct that mode's
-          ``ExtinctionScatterer`` above.
-        - ``{name}_median_radius_nm``: the clipped median radius [nm],
-          shape [altitude] -- the literal ``median_radius`` argument used
-          to construct that mode's ``ExtinctionScatterer`` above.
-
-        plus ``extinction_wavelength_nm``. The reference/median-radius
-        pair for each mode is exactly what's needed to reconstruct that
-        mode's ``ExtinctionScatterer`` independently (e.g. from a saved
-        column file, via ``get_mode_mie_database(mode_width)`` for the
-        ``mode_db`` argument) without calling this function again.
+        plus ``extinction_wavelength_nm``. The reference extinction and
+        median radius are exactly the arguments used to build that mode's
+        ``ExtinctionScatterer``, so it can be rebuilt from them with
+        :func:`get_mode_mie_database`.
 
     Notes
     -----
-    Both MAM4 modes are included, each using its own mode-width-matched
-    Mie database (not a shared, mismatched one) for both extinction
-    magnitude AND phase function / wavelength scaling:
-
-    - ``aerosol_accum``  (so4_a1, sigma_g = 1.6)
-    - ``aerosol_coarse`` (so4_a3, sigma_g = 1.2)
+    Median radii are clipped to the Mie database range (10–590 nm), and
+    extinction is set to zero where the radius is below 10 nm.
     """
     r_min = float(_MEDIAN_RADIUS_NM.min())
     r_max = float(_MEDIAN_RADIUS_NM.max())

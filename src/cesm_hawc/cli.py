@@ -1,7 +1,6 @@
-"""
-cesm_hawc.cli
-=============
-``cesm-hawc`` console-script entry point.
+"""The ``cesm-hawc`` command-line interface.
+
+::
 
     cesm-hawc save-inputs --config config.toml --mode {fixed,orbit}
     cesm-hawc run         --config config.toml --mode {fixed,orbit}
@@ -52,6 +51,7 @@ _L2_DIAG_FIELDNAMES = [
 
 
 def _require_sim_deps() -> None:
+    """Exit with install instructions if the ``[sim]`` extra is missing."""
     try:
         import hawcsimulator  # noqa: F401
         import sasktran2  # noqa: F401
@@ -65,6 +65,7 @@ def _require_sim_deps() -> None:
 @dataclass(frozen=True)
 class _RunSettings:
     """``[case]`` with command-line overrides applied."""
+
     name: str            # case name: also the output folder name
     waccm_dir: str
     out_dir: str
@@ -74,6 +75,7 @@ class _RunSettings:
 
     @property
     def output_name(self) -> str:
+        """Output folder name: the case name, plus ``_no_ozone`` with strip_ozone."""
         # An ozone-stripped run reads the same files as a normal run of this
         # case, so it writes to its own folder rather than overwriting or
         # resuming into the normal run's output.
@@ -81,10 +83,12 @@ class _RunSettings:
 
     @property
     def case_out(self) -> str:
+        """``out_dir/<output_name>``."""
         return os.path.join(self.out_dir, self.output_name)
 
 
 def _settings(cfg: CesmHawcConfig, args: argparse.Namespace) -> _RunSettings:
+    """Combine ``[case]`` with command-line overrides."""
     c = cfg.case
     name = args.case_name or c.name
     return _RunSettings(
@@ -98,6 +102,7 @@ def _settings(cfg: CesmHawcConfig, args: argparse.Namespace) -> _RunSettings:
 
 
 def _strip_ozone(profiles: dict) -> dict:
+    """Copy of ``profiles`` with ozone set to zero."""
     return {**profiles, "vmr_o3": np.zeros_like(profiles["vmr_o3"])}
 
 
@@ -106,8 +111,10 @@ def _strip_ozone(profiles: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _fixed_jobs(cfg: CesmHawcConfig, s: _RunSettings) -> list[tuple[str, str, pd.Timestamp]]:
-    """One job per history file: ``(path, label, obs_time)``, where
-    ``label`` is the file name without ``.nc``."""
+    """Build ``fixed`` jobs: one ``(path, label, obs_time)`` per history file.
+
+    ``label`` is the file name without ``.nc``.
+    """
     from cesm_hawc import file_index
 
     c, f = cfg.case, cfg.fixed
@@ -138,6 +145,7 @@ def _fixed_jobs(cfg: CesmHawcConfig, s: _RunSettings) -> list[tuple[str, str, pd
 # ---------------------------------------------------------------------------
 
 def _orbit_day_index(o, out_dir):
+    """Orbit day index (cached in ``out_dir``), number of orbit days, and epoch."""
     from cesm_hawc import orbit_files
 
     orbit_paths = orbit_files.load_orbit_files(o.orbit_dir, o.orbit_pattern)
@@ -149,9 +157,10 @@ def _orbit_day_index(o, out_dir):
 
 def _build_orbit_daily_jobs(o, waccm_dir: str, pattern: str, start_date, end_date,
                             out_dir: str) -> list[tuple[str, list[dict], str]]:
-    """One job per calendar date of the case's history files:
-    ``(date, observations, history_file)``. The *n*-th date (sorted) uses
-    orbit day *n* mod the number of orbit days."""
+    """Build daily ``orbit`` jobs: one ``(date, observations, history_file)`` per date.
+
+    The *n*-th date (sorted) uses orbit day *n* mod the number of orbit days.
+    """
     from cesm_hawc import file_index, orbit_files
 
     day_idx, n_orbit_days, epoch = _orbit_day_index(o, out_dir)
@@ -174,9 +183,7 @@ def _build_orbit_daily_jobs(o, waccm_dir: str, pattern: str, start_date, end_dat
 
 def _build_orbit_subdaily_jobs(o, waccm_dir: str, pattern: str, start_date, end_date,
                                out_dir: str) -> list[tuple[str, list[dict], str]]:
-    """Like ``_build_orbit_daily_jobs``, but for history output written more
-    than once per day: one job per *file*, labelled
-    ``YYYY-MM-DD-SSSSS``.
+    """Build sub-daily ``orbit`` jobs: one per history file, labelled ``YYYY-MM-DD-SSSSS``.
 
     The full-day observation pool per calendar date is the same as the
     daily path. Each observation is then assigned to whichever snapshot is
@@ -223,6 +230,7 @@ def _build_orbit_subdaily_jobs(o, waccm_dir: str, pattern: str, start_date, end_
 
 
 def _orbit_jobs(cfg: CesmHawcConfig, s: _RunSettings) -> list[tuple[str, list[dict], str]]:
+    """Orbit jobs ``(label, observations, history_file)`` for the configured cadence."""
     c, o = cfg.case, cfg.orbit
     build = _build_orbit_subdaily_jobs if o.h2_cadence == "subdaily" else _build_orbit_daily_jobs
     return build(o, s.waccm_dir, c.pattern, c.start_date, c.end_date, s.out_dir)
@@ -235,6 +243,7 @@ def _orbit_jobs(cfg: CesmHawcConfig, s: _RunSettings) -> list[tuple[str, list[di
 def _save_fixed_file(path: str, out_path: str, lat: float, lon: float, obs_time,
                      time_index: int, alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray,
                      profiles_only: bool) -> str:
+    """Save one history file's fixed column to ``out_path``; returns an OK/FAIL line."""
     from cesm_hawc.save_inputs import save_column_inputs
     from cesm_hawc.waccm import WACCMAtmosphere
 
@@ -252,8 +261,10 @@ def _save_fixed_file(path: str, out_path: str, lat: float, lon: float, obs_time,
 def _save_orbit_job(label: str, observations: list[dict], h2_path: str, job_out: str,
                     time_index: int, alt_grid_m: np.ndarray, wavelengths_nm: np.ndarray,
                     profiles_only: bool) -> str:
-    """Save every observation's column to ``job_out/column_<HHMMSS>.nc``,
-    with its observation time and satellite position as attributes."""
+    """Save each observation's column to ``job_out/column_<HHMMSS>.nc``.
+
+    The observation time and satellite position are saved as attributes.
+    """
     from cesm_hawc.save_inputs import save_column_inputs
     from cesm_hawc.waccm import WACCMAtmosphere
 
@@ -283,6 +294,7 @@ def _save_orbit_job(label: str, observations: list[dict], h2_path: str, job_out:
 # ---------------------------------------------------------------------------
 
 def _save_cesm_extinction(waccm_obj, lat, lon, time_index, alt_grid_m, out_dir) -> None:
+    """Write CESM's own extinction to ``out_dir/cesm_extinction.nc``, if present."""
     import xarray as xr
 
     extracted = waccm_obj.extract_cesm_extinction(lat, lon, time_index, alt_grid_m)
@@ -299,9 +311,11 @@ def _save_cesm_extinction(waccm_obj, lat, lon, time_index, alt_grid_m, out_dir) 
 def _run_fixed_file(path: str, file_out: str, lat: float, lon: float, sza_deg: float,
                     saa_deg: float, obs_time, time_index: int, alt_grid_m: np.ndarray,
                     wavelengths_nm: np.ndarray, run_l2: bool, strip_ozone: bool) -> str:
-    """One history file, one column. Writes ``l1b.nc`` (with truth
-    extinction), ``l2.nc`` when ``run_l2``, ``cesm_extinction.nc`` and
-    ``summary.txt`` to ``file_out``."""
+    """Run one ``fixed`` job: one column from one history file.
+
+    Writes ``l1b.nc`` (with truth extinction), ``l2.nc`` when ``run_l2``,
+    ``cesm_extinction.nc`` and ``summary.txt`` to ``file_out``.
+    """
     from cesm_hawc.noise import default_noise_model
     from cesm_hawc.orbit_files import l1b_image_to_dataset
     from cesm_hawc.outputs import format_burden_summary, write_text_summary
@@ -351,18 +365,20 @@ def _run_fixed_file(path: str, file_out: str, lat: float, lon: float, sza_deg: f
 
 
 def _safe_time_str(t) -> str:
+    """Timestamp as a file-name-safe string, e.g. ``2035-01-07T123000``."""
     return str(pd.Timestamp(t)).replace(" ", "T").replace(":", "")
 
 
 def _run_orbit_job(label: str, observations: list[dict], case_name: str, h2_path: str,
                    out_root: str, time_index: int, alt_grid_m: np.ndarray,
                    wavelengths_nm: np.ndarray, run_l2: bool, strip_ozone: bool = False) -> str:
-    """One job (a day, or one sub-daily history file) of an orbit run.
-    Forward-only by default; full L2 retrieval per observation when
-    ``run_l2`` is True (slow: minutes per profile). L2 mode is resumable
-    within a job via an incrementally-written diagnostics CSV plus
-    per-profile .nc saves; see ``cesm_hawc.resume``. All output lands under
-    ``out_root/case_name/label/``.
+    """Run one ``orbit`` job: a day, or one sub-daily history file.
+
+    Forward model only, or with the L2 retrieval for every observation when
+    ``run_l2`` is True (minutes per profile). With L2, finished profiles are
+    recorded in a diagnostics CSV and saved individually as they complete,
+    so a re-run resumes within the job (see :mod:`cesm_hawc.resume`). All
+    output goes under ``out_root/case_name/label/``.
     """
     import contextlib
     import io
@@ -512,11 +528,13 @@ def _run_orbit_job(label: str, observations: list[dict], case_name: str, h2_path
 # ---------------------------------------------------------------------------
 
 def _require_mode_table(cfg: CesmHawcConfig, command: str, mode: str) -> None:
+    """Exit with a message if the config has no table for ``mode``."""
     if getattr(cfg, mode) is None:
         sys.exit(f"{command} --mode {mode} requires a [{mode}] table in config.toml")
 
 
 def _save_inputs(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
+    """Run the ``save-inputs`` command."""
     from cesm_hawc.dispatch import run_jobs
 
     mode = args.mode
@@ -553,6 +571,7 @@ def _save_inputs(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
 
 
 def _run(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
+    """Run the ``run`` command: skip finished jobs, pre-build caches, then dispatch."""
     from cesm_hawc.calibration import warm_calibration_database, warm_retrieval_optical_database
     from cesm_hawc.constituents import warm_mode_databases
     from cesm_hawc.dispatch import run_jobs
@@ -628,10 +647,11 @@ def _run(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def _warm_mode_databases_if_available() -> None:
-    """Pre-warm the mode-specific Mie databases before ``save-inputs``
-    dispatches to a worker pool, same race-condition concern as `run`'s
-    pre-warm calls, but non-fatal here, since ``save-inputs`` must keep
-    working when sasktran2 isn't installed at all."""
+    """Pre-build the sulfate-mode Mie databases if ``sasktran2`` is installed.
+
+    Unlike ``run``, ``save-inputs`` must work without ``sasktran2``, so this
+    does nothing when it is missing and only warns if the build fails.
+    """
     try:
         from cesm_hawc.constituents import warm_mode_databases
     except ImportError:
@@ -644,6 +664,7 @@ def _warm_mode_databases_if_available() -> None:
 
 
 def _report(results: list[str], unit: str) -> None:
+    """Log how many jobs succeeded and list the failures."""
     ok = [r for r in results if r.startswith("OK")]
     fail = [r for r in results if r.startswith("FAIL")]
     log.info("-- Run complete --")
@@ -655,6 +676,13 @@ def _report(results: list[str], unit: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the ``cesm-hawc`` argument parser.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Parser with the ``save-inputs`` and ``run`` subcommands.
+    """
     parser = argparse.ArgumentParser(
         prog="cesm-hawc",
         description="Simulate HAWC ALI observations and retrievals from CESM2/WACCM output.",
@@ -701,6 +729,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the ``cesm-hawc`` command.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments, without the program name. Default:
+        ``sys.argv[1:]``.
+
+    Raises
+    ------
+    SystemExit
+        On invalid arguments, a config error, or a missing ``[sim]`` extra
+        for ``run``.
+    """
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

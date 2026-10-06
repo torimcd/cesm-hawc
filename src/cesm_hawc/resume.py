@@ -1,20 +1,12 @@
-"""
-cesm_hawc.resume
-==================
-Generic resumability helpers for long-running batch jobs: skip work whose
-expected outputs already exist, and incrementally persist per-item progress
-to a CSV so a killed job resumes instead of restarting.
+"""Helpers that let long batch runs resume after being interrupted.
 
-Two layers, used together for expensive multi-hour batch jobs:
+They work at two levels, used together:
 
-- Coarse (job-level): ``outputs_already_exist()`` lets a job dispatcher skip
-  a whole job (e.g. a day) whose expected output files already exist, so
-  re-submitting doesn't reprocess completed work from scratch.
-- Fine (item-level, within one job): ``load_completed_keys()`` /
-  ``append_csv_row()`` let a single job that processes many items (e.g. one
-  day's many observations) skip items already recorded in a CSV written
-  incrementally during a previous run, and pick up only the remaining
-  items rather than redoing the whole job.
+- Job level: :func:`outputs_already_exist` lets a dispatcher skip a whole
+  job (e.g. a day) whose output files already exist.
+- Item level: :func:`load_completed_keys` and :func:`append_csv_row` let a
+  job that processes many items (e.g. one day's observations) record each
+  finished item in a CSV as it goes, and skip those items when re-run.
 """
 
 from __future__ import annotations
@@ -28,20 +20,46 @@ log = logging.getLogger(__name__)
 
 
 def outputs_already_exist(expected_paths: list[str]) -> bool:
-    """True if every path in ``expected_paths`` already exists on disk."""
+    """Check whether every expected output file exists.
+
+    Parameters
+    ----------
+    expected_paths : list of str
+        Paths a finished job would have written.
+
+    Returns
+    -------
+    bool
+        True if all of them exist.
+    """
     return all(os.path.exists(p) for p in expected_paths)
 
 
 def load_completed_keys(csv_path: str, key_columns: list[str],
                          expected_fieldnames: list[str]) -> set[tuple]:
-    """
-    Return the set of ``key_columns`` tuples already present in an existing
-    progress CSV, so a resumed run skips re-doing that work.
+    """Read which items a progress CSV already records as done.
 
-    If the file's header doesn't match ``expected_fieldnames`` (e.g. left
-    over from an older version of the caller), back it up and start fresh
-    rather than risk corrupting it with inconsistent columns, or silently
-    misreading columns that have since changed meaning.
+    Parameters
+    ----------
+    csv_path : str
+        Progress CSV written by :func:`append_csv_row`.
+    key_columns : list of str
+        Columns that identify an item.
+    expected_fieldnames : list of str
+        The CSV's full expected header.
+
+    Returns
+    -------
+    set of tuple
+        One tuple of ``key_columns`` values (as strings) per recorded row.
+        Empty if the file doesn't exist, is empty, or can't be read.
+
+    Notes
+    -----
+    If the file's header doesn't match ``expected_fieldnames`` (for example,
+    a file left by an older version), it is renamed to
+    ``<csv_path>.schema_mismatch.bak`` and the run starts fresh, rather than
+    appending inconsistent rows or misreading columns.
     """
     if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
         return set()
@@ -68,8 +86,21 @@ def load_completed_keys(csv_path: str, key_columns: list[str],
 
 
 def append_csv_row(csv_path: str, row: dict, fieldnames: list[str]) -> None:
-    """Append one row to a progress CSV immediately, flushed to disk,
-    rather than accumulating in memory for a single end-of-job write."""
+    """Append one row to a progress CSV, writing it to disk immediately.
+
+    Writing each row as it finishes, rather than once at the end of a job,
+    means a killed job loses at most the item in progress.
+
+    Parameters
+    ----------
+    csv_path : str
+        Progress CSV; it and its directory are created if needed, with a
+        header row for a new file.
+    row : dict
+        Values for this row, keyed by column name.
+    fieldnames : list of str
+        Column order.
+    """
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     header_needed = not (os.path.exists(csv_path) and os.path.getsize(csv_path) > 0)
     pd.DataFrame([row], columns=fieldnames).to_csv(

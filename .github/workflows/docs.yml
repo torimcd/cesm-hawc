@@ -1,0 +1,69 @@
+# Build the documentation (including the generated API reference) on every
+# pull request and push, and publish it to GitHub Pages from main.
+#
+# One-time setup: in the repository's Settings → Pages, set "Source" to
+# "GitHub Actions".
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Jupyter Book 2 needs Node.js.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install tools
+        run: pip install "jupyter-book>=2" ruff
+
+      # The API generator relies on numpydoc-style docstrings.
+      - name: Check docstrings
+        run: ruff check src/
+
+      - name: Generate API reference
+        run: python docs/generate_api.py
+
+      - name: Build book
+        working-directory: docs
+        env:
+          # Pages serves the site from /<repository name>/.
+          BASE_URL: /${{ github.event.repository.name }}
+        run: jupyter book build --html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

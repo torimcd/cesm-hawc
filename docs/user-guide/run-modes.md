@@ -15,7 +15,7 @@ cesm-hawc run         --config config.toml --mode {fixed,orbit}
 Each run processes **one model case**: the history files that `[case]`
 points to. Output goes under `out_dir/<case name>/`. To process several
 cases, run once per case. `--case-name` lets one config serve them all (see
-[Configuration](configuration.md#case)).
+[Configuration](#config-case)).
 
 ## Choosing a mode
 

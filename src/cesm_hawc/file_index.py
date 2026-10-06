@@ -1,8 +1,8 @@
-"""
-cesm_hawc.file_index
-=====================
-Generic date/timestamp-based file indexing over a directory of CESM/WACCM
-history files (h0 monthly, h1 hourly, h2 daily).
+"""Find CAM history files and read the dates in their names.
+
+CAM history files are named ``<case>.cam.hN.YYYY-MM.nc`` (e.g. monthly
+means) or ``<case>.cam.hN.YYYY-MM-DD-SSSSS.nc``, where ``SSSSS`` is the
+second of the day.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ _DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})-(\d+)\.nc$")
 
 
 def _glob_sorted(directory: str, pattern: str) -> list[str]:
+    """Sorted glob matches; raises ``FileNotFoundError`` if there are none."""
     paths = sorted(glob.glob(os.path.join(directory, pattern)))
     if not paths:
         raise FileNotFoundError(f"No files matching '{pattern}' found in: {directory}")
@@ -26,15 +27,43 @@ def _glob_sorted(directory: str, pattern: str) -> list[str]:
 
 
 def list_files(directory: str, pattern: str) -> list[str]:
-    """Return the sorted paths in ``directory`` matching ``pattern``.
-    Raises ``FileNotFoundError`` if there are none."""
+    """List the files in a directory that match a glob pattern.
+
+    Parameters
+    ----------
+    directory : str
+        Directory to search.
+    pattern : str
+        Glob pattern, e.g. ``"*.cam.h0.*.nc"``.
+
+    Returns
+    -------
+    list of str
+        Matching paths, sorted.
+
+    Raises
+    ------
+    FileNotFoundError
+        If nothing matches.
+    """
     return _glob_sorted(directory, pattern)
 
 
 def filename_date(path: str) -> str | None:
-    """Return the date in a CAM history file name, as ``"YYYY-MM"``
-    (``*.YYYY-MM.nc``, e.g. monthly h0) or ``"YYYY-MM-DD"``
-    (``*.YYYY-MM-DD-SSSSS.nc``), or ``None`` if the name has no date."""
+    """Read the date from a CAM history file name.
+
+    Parameters
+    ----------
+    path : str
+        File path; only the file name is used.
+
+    Returns
+    -------
+    str or None
+        ``"YYYY-MM"`` for ``*.YYYY-MM.nc`` names, ``"YYYY-MM-DD"`` for
+        ``*.YYYY-MM-DD-SSSSS.nc`` names, or ``None`` if the name has no
+        date.
+    """
     m = _FILE_DATE_RE.search(os.path.basename(path))
     if m is None:
         return None
@@ -42,10 +71,20 @@ def filename_date(path: str) -> str | None:
 
 
 def filename_time(path: str) -> pd.Timestamp | None:
-    """Return a representative time for a CAM history file from its name:
-    the 15th at 12:00 for ``YYYY-MM``, otherwise the date plus the
-    ``SSSSS`` seconds of day (0 if absent). ``None`` if the name has no
-    date."""
+    """Choose a representative time for a CAM history file from its name.
+
+    Parameters
+    ----------
+    path : str
+        File path; only the file name is used.
+
+    Returns
+    -------
+    pandas.Timestamp or None
+        The 15th at 12:00 for ``*.YYYY-MM.nc`` names; otherwise the date
+        plus the ``SSSSS`` seconds of day (0 if absent). ``None`` if the
+        name has no date.
+    """
     m = _FILE_DATE_RE.search(os.path.basename(path))
     if m is None:
         return None
@@ -56,10 +95,24 @@ def filename_time(path: str) -> pd.Timestamp | None:
 
 
 def date_in_range(date: str, start: str | None, end: str | None) -> bool:
-    """True if ``date`` (``"YYYY-MM"`` or ``"YYYY-MM-DD"``) falls within
-    ``[start, end]`` (``"YYYY-MM-DD"``, either may be ``None``). Bounds are
-    compared at ``date``'s own precision, so a month is kept if any part of
-    it is in range."""
+    """Check whether a file date falls within a date range.
+
+    Bounds are compared at ``date``'s own precision, so a month is in range
+    if any part of it is.
+
+    Parameters
+    ----------
+    date : str
+        ``"YYYY-MM"`` or ``"YYYY-MM-DD"``, as returned by
+        :func:`filename_date`.
+    start, end : str or None
+        Inclusive bounds as ``"YYYY-MM-DD"``; ``None`` means unbounded.
+
+    Returns
+    -------
+    bool
+        True if ``date`` is within ``[start, end]``.
+    """
     n = len(date)
     if start and date < start[:n]:
         return False
@@ -69,15 +122,31 @@ def date_in_range(date: str, start: str | None, end: str | None) -> bool:
 
 
 def index_by_date(directory: str, pattern: str) -> dict[str, str]:
-    """Return ``{"YYYY-MM-DD": filepath}`` for daily (h2) files in a
-    directory, matching the ``*.cam.h2.YYYY-MM-DD-SSSSS.nc`` convention.
+    """Index daily history files by calendar date.
 
-    Collapses to one file per calendar date. If a directory holds more
-    than one file for the same date (e.g. 12-hourly output, two files per
-    day), only the last one in sorted order survives; the rest are
-    silently dropped. Fine for genuinely-daily output; use
-    ``index_by_timestamp`` instead for sub-daily output where every file
-    needs to be kept.
+    Parameters
+    ----------
+    directory : str
+        Directory to search.
+    pattern : str
+        Glob pattern, e.g. ``"*.cam.h2.*.nc"``. Only names ending in
+        ``YYYY-MM-DD-SSSSS.nc`` are indexed.
+
+    Returns
+    -------
+    dict of str to str
+        ``{"YYYY-MM-DD": path}``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If nothing matches ``pattern``.
+
+    Notes
+    -----
+    Keeps one file per date: if a date has several (e.g. 12-hourly output),
+    only the last in sorted order is kept and the rest are dropped without
+    warning. Use :func:`index_by_timestamp` for sub-daily output.
     """
     result: dict[str, str] = {}
     for p in _glob_sorted(directory, pattern):
@@ -88,12 +157,30 @@ def index_by_date(directory: str, pattern: str) -> dict[str, str]:
 
 
 def index_by_timestamp(directory: str, pattern: str) -> dict[pd.Timestamp, str]:
-    """Return ``{timestamp: filepath}`` for every file matching the
-    ``*.cam.hN.YYYY-MM-DD-SSSSS.nc`` convention, one entry per distinct
-    (date, seconds-of-day). Unlike ``index_by_date``, nothing is
-    collapsed when a directory holds more than one file per calendar date
-    (e.g. 12-hourly output: ``...-00000.nc`` and ``...-43200.nc`` both
-    survive as separate keys)."""
+    """Index history files by date and time of day.
+
+    Unlike :func:`index_by_date`, every file is kept when there are several
+    per day (e.g. ``...-00000.nc`` and ``...-43200.nc`` for 12-hourly
+    output).
+
+    Parameters
+    ----------
+    directory : str
+        Directory to search.
+    pattern : str
+        Glob pattern. Only names ending in ``YYYY-MM-DD-SSSSS.nc`` are
+        indexed.
+
+    Returns
+    -------
+    dict of pandas.Timestamp to str
+        ``{date + SSSSS seconds: path}``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If nothing matches ``pattern``.
+    """
     result: dict[pd.Timestamp, str] = {}
     for p in _glob_sorted(directory, pattern):
         m = _DATETIME_RE.search(os.path.basename(p))

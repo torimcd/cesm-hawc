@@ -11,6 +11,7 @@ comments.
 Paths may start with `~`. Keys without a default are required whenever their
 table is present.
 
+(config-case)=
 ## `[case]`
 
 The model case to process, where to write, and options shared by both modes.

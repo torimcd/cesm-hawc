@@ -43,5 +43,13 @@ where = ["src"]
 [tool.setuptools.package-data]
 cesm_hawc = ["data/*.nc"]
 
+[tool.ruff.lint]
+# Docstring checks (numpydoc style). Run with: ruff check src/
+extend-select = ["D"]
+ignore = ["D105", "D107"]  # magic methods; __init__ is documented on the class
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

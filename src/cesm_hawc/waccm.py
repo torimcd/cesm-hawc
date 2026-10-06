@@ -1,23 +1,29 @@
-"""
-cesm_hawc.waccm
-===============
-Read CESM2/WACCM CAM history output and extract single-column atmospheric
-profiles for use with the HAWC ALI simulator.
+"""Read CESM2/WACCM history files and extract atmospheric columns.
 
-Notes
------
-Tested with BWSSP245 / TSMLT compsets using MAM4 aerosol. The following
-variables must be present in the history file (add to fincl in user_nl_cam):
+Columns are interpolated onto a regular altitude grid, with the MAM4
+accumulation and coarse sulfate modes converted to lognormal number and
+median radius. Tested with the BWSSP245 and TSMLT compsets (MAM4 aerosol).
+The history file needs:
 
-    T, Q, PS, hyam, hybm        -- state
-    O3, NO2, H2O, SO2           -- gas chemistry (mol/mol)
-    so4_a1, so4_a3              -- sulfate mass mixing ratio (kg/kg)
-    num_a1, num_a3              -- aerosol number mixing ratio (#/kg)
+- ``T``, ``Q``, ``PS``, ``hyam``, ``hybm``: required;
+- ``O3``, ``NO2``, ``H2O``, ``SO2``: gas mixing ratios [mol/mol];
+- ``so4_a1``, ``so4_a3``: sulfate mass mixing ratios [kg/kg];
+- ``num_a1``, ``num_a3``: aerosol number mixing ratios [#/kg].
 
-MAM4 mode sigma_g values (WACCM/BWSSP245)
-------------------------------------------
-    Accumulation (_a1): sigma_g = 1.6   (Mills et al. 2016)
-    Coarse (_a3):       sigma_g = 1.2   (Mills et al. 2016)
+Attributes
+----------
+MAM4_SIGMA : dict
+    Geometric standard deviation of each MAM4 mode for WACCM stratospheric
+    sulfate (Mills et al., 2016): 1.6 for ``a1`` and ``a2``, 1.2 for
+    ``a3``.
+RHO_SULFATE : float
+    Sulfate aerosol particle density [kg m⁻³].
+REQUIRED_VARS : set of str
+    Variables without which :class:`WACCMAtmosphere` raises ``ValueError``.
+RECOMMENDED_VARS : list of str
+    Variables :class:`WACCMAtmosphere` warns about when missing. Missing
+    gases are treated as zero, and a missing sulfate mode as having no
+    particles.
 """
 
 from __future__ import annotations
@@ -43,10 +49,9 @@ RHO_SULFATE = 1600.0
 MAM4_SIGMA = {"a1": 1.6, "a2": 1.6, "a3": 1.2}
 
 # REQUIRED_VARS: WACCMAtmosphere.__init__ raises ValueError without these.
-# SCIENCE_CRITICAL_VARS: NOT enforced by WACCMAtmosphere itself; missing
-#   ones are silently zeroed by sulfate_mode()/chem_vmr() and only trigger a
-#   warnings.warn().
-# RECOMMENDED_VARS: the full set _check_required_vars() warns on if missing\
+# SCIENCE_CRITICAL_VARS: not enforced; missing gases are zeroed by chem_vmr()
+#   (with a warning) and missing sulfate modes by sulfate_mode().
+# RECOMMENDED_VARS: everything _check_required_vars() warns about if missing.
 REQUIRED_VARS = {"T", "Q", "PS", "hyam", "hybm"}
 SCIENCE_CRITICAL_VARS = ["O3", "so4_a1", "so4_a3", "num_a1", "num_a3"]
 RECOMMENDED_VARS = ["NO2", "H2O", "SO2"] + SCIENCE_CRITICAL_VARS
@@ -56,25 +61,54 @@ RECOMMENDED_VARS = ["NO2", "H2O", "SO2"] + SCIENCE_CRITICAL_VARS
 
 def hybrid_to_pressure(hyam: np.ndarray, hybm: np.ndarray,
                         p0: float, ps: float) -> np.ndarray:
-    """Convert hybrid sigma-pressure coefficients to pressure [Pa]."""
+    """Pressure on hybrid sigma-pressure levels.
+
+    Parameters
+    ----------
+    hyam, hybm : numpy.ndarray
+        Hybrid A and B coefficients at level midpoints.
+    p0 : float
+        Reference pressure [Pa].
+    ps : float
+        Surface pressure [Pa].
+
+    Returns
+    -------
+    numpy.ndarray
+        Pressure [Pa], ``hyam * p0 + hybm * ps``.
+    """
     return hyam * p0 + hybm * ps
 
 
 def pressure_to_altitude(pressure: np.ndarray, temperature: np.ndarray,
                           ps: float, z_surface: float = 0.0) -> np.ndarray:
-    """
-    Hydrostatic integration from pressure to geometric altitude [m].
+    """Height of each model level by hydrostatic integration.
 
     Parameters
     ----------
-    pressure    : [Pa]  pressure on model levels
-    temperature : [K]   temperature on model levels
-    ps          : [Pa]  surface pressure
-    z_surface   : [m]   surface elevation, default 0
+    pressure : numpy.ndarray
+        Pressure on model levels [Pa], in either vertical order.
+    temperature : numpy.ndarray
+        Temperature on model levels [K]; pass virtual temperature to
+        account for humidity.
+    ps : float
+        Surface pressure [Pa].
+    z_surface : float, optional
+        Height of the surface [m]. Default 0.
 
     Returns
     -------
-    altitude : [m]  geometric altitude of each model level
+    numpy.ndarray
+        Height of each level [m], in the same order as ``pressure``.
+
+    Notes
+    -----
+    Integrates the hypsometric equation layer by layer from the surface.
+    Interface pressures are the geometric means of adjacent levels, with
+    ``ps`` at the bottom and half the top level's pressure at the top. Each
+    level sits at the midpoint of its layer. Gravity is the constant
+    standard value, so the result is geopotential height, slightly below
+    geometric altitude in the stratosphere (about 140 m at 30 km).
     """
     nlev = len(pressure)
     flip = pressure[0] < pressure[-1]
@@ -100,11 +134,26 @@ def pressure_to_altitude(pressure: np.ndarray, temperature: np.ndarray,
 
 def blend_h2o(q_vmr: np.ndarray, chem_h2o: np.ndarray,
               pressure: np.ndarray, join_pa: float = 10000.0) -> np.ndarray:
-    """
-    Blend dynamics Q (troposphere) with chemistry H₂O (stratosphere).
+    """Blend tropospheric humidity with stratospheric chemistry water vapour.
 
-    Uses a cosine taper centred at join_pa with a transition width of one
-    decade in log-pressure. Default join_pa = 100 hPa (~tropopause).
+    Parameters
+    ----------
+    q_vmr : numpy.ndarray
+        Water vapour from the dynamics humidity ``Q`` [mol/mol].
+    chem_h2o : numpy.ndarray
+        Water vapour from the chemistry tracer ``H2O`` [mol/mol].
+    pressure : numpy.ndarray
+        Pressure on the same levels [Pa].
+    join_pa : float, optional
+        Centre of the transition [Pa]. Default 10000 (100 hPa, near the
+        tropopause).
+
+    Returns
+    -------
+    numpy.ndarray
+        Blended water vapour [mol/mol]: ``q_vmr`` below the transition,
+        ``chem_h2o`` above, with a cosine taper one decade wide in log
+        pressure.
     """
     merged = np.empty_like(q_vmr)
     lp0, tw = np.log(join_pa), np.log(10.0)
@@ -122,24 +171,31 @@ def blend_h2o(q_vmr: np.ndarray, chem_h2o: np.ndarray,
 def mam4_lognormal(so4_mmr: np.ndarray, num_per_kg: np.ndarray,
                    n_air_cm3: np.ndarray, sigma_g: float
                    ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Derive lognormal median radius [μm] and number density [cm⁻³] from
-    MAM4 mass and number mixing ratios.
-
-    Uses the lognormal mass moment relation:
-        mass_conc = N · (4/3)π ρ · r_m³ · exp(4.5 · ln(σ_g)²)
+    """Lognormal median radius and number from MAM4 mixing ratios.
 
     Parameters
     ----------
-    so4_mmr    : [kg/kg]  sulfate mass mixing ratio
-    num_per_kg : [#/kg]   number mixing ratio
-    n_air_cm3  : [cm⁻³]  air number density
-    sigma_g    : float    geometric standard deviation
+    so4_mmr : numpy.ndarray
+        Sulfate mass mixing ratio [kg/kg].
+    num_per_kg : numpy.ndarray
+        Number mixing ratio [#/kg].
+    n_air_cm3 : numpy.ndarray
+        Air number density [cm⁻³].
+    sigma_g : float
+        Geometric standard deviation of the mode.
 
     Returns
     -------
-    r_um  : [μm]   lognormal median radius per level
-    N_cm3 : [cm⁻³] number concentration per level
+    r_um : numpy.ndarray
+        Lognormal median radius [μm], floored at 1 nm.
+    N_cm3 : numpy.ndarray
+        Number concentration [cm⁻³], floored at 1 m⁻³.
+
+    Notes
+    -----
+    Inverts the lognormal mass moment
+    ``M = N (4/3) π ρ r_m³ exp(4.5 ln²σ_g)`` with ``ρ =``
+    :data:`RHO_SULFATE`.
     """
     rho_air   = (n_air_cm3 * 1e6) * M_AIR / NA          # [kg m⁻³]
     mass_conc = np.maximum(so4_mmr, 0.0) * rho_air       # [kg m⁻³]
@@ -157,21 +213,34 @@ def mam4_lognormal(so4_mmr: np.ndarray, num_per_kg: np.ndarray,
 # ── Main class ─────────────────────────────────────────────────────────────
 
 class WACCMAtmosphere:
-    """
-    Read a CESM2/WACCM CAM history NetCDF file and extract single-column
-    atmospheric profiles for the HAWC simulator.
+    """A CESM2/WACCM history file, from which columns are extracted.
 
     Parameters
     ----------
     filepath : str or list of str
-        Path(s) to WACCM CAM h0 NetCDF file(s).
+        CAM history file, or several files to open as one dataset. Any
+        stream (h0, h2, ...).
     alt_grid_km : array-like, optional
-        Output altitude grid [km]. Default: 0–65 km in 1 km steps.
+        Output altitude grid [km]. Default 0–65 km every 1 km.
     z_surface : float, optional
-        Surface elevation [m] for hydrostatic integration. Default 0.
+        Surface height [m] used in the hydrostatic integration. Default 0,
+        so heights are relative to the local surface.
     h2o_join_hpa : float, optional
-        Pressure [hPa] at which dynamics Q blends into chemistry H₂O.
-        Default 100 hPa (~tropopause).
+        Pressure [hPa] at which humidity ``Q`` blends into chemistry
+        ``H2O``. Default 100.
+
+    Attributes
+    ----------
+    ds : xarray.Dataset
+        The opened history file(s).
+    alt_grid_m : numpy.ndarray
+        Output altitude grid [m].
+
+    Raises
+    ------
+    ValueError
+        If any of :data:`REQUIRED_VARS` is missing. Missing
+        :data:`RECOMMENDED_VARS` only produce a warning.
 
     Examples
     --------
@@ -201,6 +270,7 @@ class WACCMAtmosphere:
         self._check_required_vars()
 
     def _check_required_vars(self):
+        """Raise for missing required variables; warn for missing recommended ones."""
         have = set(self.ds.data_vars) | set(self.ds.coords)
         missing = REQUIRED_VARS - have
         if missing:
@@ -210,6 +280,7 @@ class WACCMAtmosphere:
                 warnings.warn(f"'{v}' not in file — add to fincl in user_nl_cam.")
 
     def _p0(self) -> float:
+        """Return the reference pressure ``P0`` [Pa], or 100 000 with a warning if absent."""
         if "P0" in self.ds:
             return float(self.ds["P0"].values)
         warnings.warn("P0 not found; assuming 100 000 Pa.")
@@ -217,7 +288,11 @@ class WACCMAtmosphere:
 
     def _interp(self, alt_m: np.ndarray, values: np.ndarray,
                 log: bool = False) -> np.ndarray:
-        """Interpolate a profile onto self.alt_grid_m."""
+        """Interpolate a profile onto ``alt_grid_m``.
+
+        Linear in ``values``, or in ``log(values)`` if ``log``; values beyond
+        the ends of ``alt_m`` are held constant.
+        """
         idx = np.argsort(alt_m)
         a, v = alt_m[idx], values[idx]
         if log:
@@ -233,39 +308,44 @@ class WACCMAtmosphere:
 
     def get_column_profiles(self, lat: float, lon: float,
                              time_index: int = 0) -> dict:
-        """
-        Extract and interpolate one WACCM column onto the altitude grid.
+        """Extract one column and interpolate it onto the altitude grid.
 
         Parameters
         ----------
-        lat        : float  target latitude [degrees], nearest-neighbour
-        lon        : float  target longitude [degrees], nearest-neighbour.
-                     Accepts either -180/180 or 0/360 convention. Always
-                     normalized to 0/360 internally before selection, since
-                     CESM/CAM history files store lon on a 0/360 grid (e.g.
-                     [0.0, 1.25, ..., 358.75]).
-        time_index : int    time slice index (0-based)
+        lat : float
+            Latitude [degrees]; the nearest grid column is used.
+        lon : float
+            Longitude [degrees], −180–180 or 0–360; the nearest grid column
+            is used.
+        time_index : int, optional
+            Time slice within the file. Default 0.
 
         Returns
         -------
-        dict with keys (all arrays on self.alt_grid_m unless noted):
+        dict
+            Arrays on :attr:`alt_grid_m` unless noted:
 
-        altitudes_m         [m]       altitude grid
-        pressure_pa         [Pa]      pressure (log-interpolated)
-        temperature_k       [K]       temperature
-        specific_humidity   [kg/kg]   specific humidity
-        vmr_o3              [mol/mol] ozone VMR
-        vmr_no2             [mol/mol] NO₂ VMR (zeros if not in file)
-        vmr_h2o             [mol/mol] H₂O blended Q + chemistry
-        vmr_so2             [mol/mol] gas-phase SO₂ (precursor diagnostic)
-        n_air_cm3           [cm⁻³]   air number density
-        sulfate_a1_N_cm3    [cm⁻³]   accumulation mode number
-        sulfate_a1_r_um     [μm]     accumulation mode median radius
-        sulfate_a1_sigma    float    1.6 (scalar)
-        sulfate_a3_N_cm3    [cm⁻³]   coarse mode number  ← ALI primary signal
-        sulfate_a3_r_um     [μm]     coarse mode median radius
-        sulfate_a3_sigma    float    1.2 (scalar, WACCM-specific)
+            - ``altitudes_m`` [m]: the altitude grid;
+            - ``pressure_pa`` [Pa];
+            - ``temperature_k`` [K];
+            - ``specific_humidity`` [kg/kg];
+            - ``vmr_o3``, ``vmr_no2``, ``vmr_so2`` [mol/mol]: zero if the
+              variable is missing;
+            - ``vmr_h2o`` [mol/mol]: blended from ``Q`` and ``H2O`` (see
+              :func:`blend_h2o`);
+            - ``n_air_cm3`` [cm⁻³]: air number density;
+            - ``sulfate_a1_N_cm3``, ``sulfate_a3_N_cm3`` [cm⁻³]:
+              accumulation and coarse mode number;
+            - ``sulfate_a1_r_um``, ``sulfate_a3_r_um`` [μm]: accumulation
+              and coarse mode median radius;
+            - ``sulfate_a1_sigma``, ``sulfate_a3_sigma`` (float): each
+              mode's geometric standard deviation.
 
+        Notes
+        -----
+        Longitudes are converted to 0–360, matching the CAM grid, before the
+        nearest column is selected. Pressure, mixing ratios, air density
+        and aerosol number are interpolated in log space.
         """
         lon = lon % 360.0  # normalize to [0, 360)
         col  = self.ds.isel(time=time_index).sel(lat=lat, lon=lon, method="nearest")
@@ -331,23 +411,28 @@ class WACCMAtmosphere:
     def sulfate_column_burden(self, lat: float, lon: float,
                                time_index: int = 0,
                                alt_range_km: tuple = (15.0, 35.0)) -> dict:
-        """
-        Compute stratospheric sulfate column burden and peak aerosol properties.
+        """Sulfate column burden and peak properties over an altitude range.
 
         Parameters
         ----------
-        lat, lon      : column coordinates [degrees]
-        time_index    : time slice index
-        alt_range_km  : (lower, upper) altitude bounds [km]
+        lat, lon : float
+            Column location [degrees].
+        time_index : int, optional
+            Time slice within the file. Default 0.
+        alt_range_km : tuple of float, optional
+            Lower and upper altitude bounds [km]. Default (15, 35).
 
         Returns
         -------
-        dict with:
-            burden_mg_m2  [mg m⁻²]  SO₄ column burden (a1 + a3 modes)
-            N_column_cm2  [cm⁻²]    number column
-            peak_alt_km   [km]      altitude of peak number concentration
-            peak_r_um     [μm]      median radius at peak
-            dominant_mode str       "a1" (fresh) or "a3" (aged)
+        dict
+            - ``burden_mg_m2`` [mg m⁻²]: sulfate burden of both modes;
+            - ``N_column_cm2`` [cm⁻²]: number column;
+            - ``peak_alt_km`` [km]: altitude of the peak number
+              concentration;
+            - ``peak_r_um`` [μm]: dominant mode's median radius at the peak;
+            - ``dominant_mode`` (str): ``"a1"`` or ``"a3"``, whichever has
+              more particles at the peak; ``"none"`` if no grid level is in
+              range.
         """
         p    = self.get_column_profiles(lat, lon, time_index)
         alt  = p["altitudes_m"]
@@ -391,33 +476,30 @@ class WACCMAtmosphere:
                                  alt_m: np.ndarray,
                                  varnames: tuple = ("EXTINCTdn", "EXTINCTUVdn",
                                                      "EXTINCTNIRdn")) -> dict:
-        """
-        Extract CESM's own internally-computed aerosol extinction on model
-        levels, interpolated onto ``alt_m``.
+        """CESM's own aerosol extinction for a column, if the file has it.
 
-        CESM computes ``EXTINCTdn`` (550 nm), ``EXTINCTUVdn`` (350 nm), and
-        ``EXTINCTNIRdn`` (1020 nm) directly during the model run, including
-        all aerosol species — this is strictly preferable to computing
-        extinction analytically from N and r (as ``constituents.py`` does
-        for the simulator's *input*) when the goal is an independent
-        cross-check, since it reflects what the model actually computed.
-        ``EXTINCTNIRdn`` at 1020 nm is a direct ALI wavelength match and
-        needs no wavelength correction for comparison with retrieved
-        extinction.
+        CESM computes ``EXTINCTdn`` (550 nm), ``EXTINCTUVdn`` (350 nm) and
+        ``EXTINCTNIRdn`` (1020 nm) during the model run, over all aerosol
+        species. They give an independent check on the extinction cesm-hawc
+        computes from number and radius; 1020 nm is also an ALI wavelength.
 
         Parameters
         ----------
-        lat, lon, time_index : column coordinates, as in
-            ``get_column_profiles``.
-        alt_m : np.ndarray
+        lat, lon : float
+            Column location [degrees].
+        time_index : int
+            Time slice within the file.
+        alt_m : numpy.ndarray
             Altitude grid [m] to interpolate onto.
-        varnames : tuple of str
-            CESM variable names to extract, if present in the file.
+        varnames : tuple of str, optional
+            Variables to extract. Default the three above.
 
         Returns
         -------
-        dict of ``{varname: np.ndarray}`` for whichever of ``varnames`` are
-        present in the file (missing ones are silently omitted).
+        dict of str to numpy.ndarray
+            Extinction [m⁻¹] on ``alt_m`` for each of ``varnames`` present
+            in the file; missing ones are left out. Zero outside the model's
+            altitude range.
         """
         col = self.ds.isel(time=time_index).sel(lat=lat, lon=lon % 360.0, method="nearest")
 
@@ -440,14 +522,19 @@ class WACCMAtmosphere:
 
     def save_column_profiles(self, lat: float, lon: float,
                               output_path: str, time_index: int = 0) -> None:
-        """
-        Extract a column and save to a small self-contained NetCDF.
+        """Save one column's profiles to a NetCDF file.
+
+        For a simulator-ready file, use
+        :func:`cesm_hawc.save_inputs.save_column_inputs` instead.
 
         Parameters
         ----------
-        lat, lon     : column coordinates [degrees]
-        output_path  : output NetCDF path
-        time_index   : time slice index
+        lat, lon : float
+            Column location [degrees].
+        output_path : str
+            NetCDF file to write.
+        time_index : int, optional
+            Time slice within the file. Default 0.
         """
         import os
         p = self.get_column_profiles(lat, lon, time_index)
@@ -473,7 +560,16 @@ class WACCMAtmosphere:
         print(f"Saved {output_path}  ({size_kb:.0f} KB)")
 
     def list_variables(self) -> list[str]:
-        """Print all chemistry and aerosol variables found in the file."""
+        """Print the chemistry and aerosol variables in the file.
+
+        Marks the variables cesm-hawc relies on and lists any of them that
+        are missing.
+
+        Returns
+        -------
+        list of str
+            The known chemistry and aerosol variables present.
+        """
         known = ["O3", "NO2", "H2O", "SO2", "HNO3", "CH4", "N2O", "CO",
                  "H2SO4", "OH",
                  "so4_a1", "so4_a2", "so4_a3",

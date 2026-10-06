@@ -1,7 +1,14 @@
-"""
-cesm_hawc.simulation
-====================
-High-level wrapper for running the HAWC ALI simulator on WACCM output.
+"""Run the HAWC ALI simulator on WACCM columns.
+
+Uses the ``ideal_dolp_imager`` configuration of ``hawcsimulator``'s
+``IdealALISimulator``. Requires the ``[sim]`` extra.
+
+Attributes
+----------
+DEFAULT_PRODUCTS : tuple of str
+    Simulator products for a run with the L2 retrieval.
+FORWARD_PRODUCTS : tuple of str
+    Simulator products for a forward-model-only run.
 """
 
 from __future__ import annotations
@@ -24,7 +31,18 @@ FORWARD_PRODUCTS = ("front_end_radiance", "l1b")
 
 
 def products_for(run_l2: bool) -> tuple:
-    """Simulator products to request: forward model only, or with L2."""
+    """Choose which simulator products to request.
+
+    Parameters
+    ----------
+    run_l2 : bool
+        Whether the L2 retrieval should run.
+
+    Returns
+    -------
+    tuple of str
+        :data:`DEFAULT_PRODUCTS` if ``run_l2``, else :data:`FORWARD_PRODUCTS`.
+    """
     return DEFAULT_PRODUCTS if run_l2 else FORWARD_PRODUCTS
 
 
@@ -39,51 +57,51 @@ def run_ali_simulation_from_profiles(
     return_extinction: bool = False,
     truth_wavelengths_nm: np.ndarray | None = None,
 ):
-    """
-    Lower-level single-observation entry point: run the simulator against
-    already-extracted WACCM ``profiles`` and a caller-supplied geometry
-    dict, instead of a file path.
+    """Run the simulator on profiles that have already been extracted.
 
-    Use this when running many observations from one file: manage your
-    own ``WACCMAtmosphere`` (and, optionally, ``IdealALISimulator``) and
-    reuse them, instead of ``run_ali_simulation()`` reopening the file per
-    call.
+    Use this when running many observations from one file: open one
+    :class:`~cesm_hawc.waccm.WACCMAtmosphere` (and optionally one
+    ``IdealALISimulator``) and reuse them, rather than calling
+    :func:`run_ali_simulation`, which reopens the file each time.
 
     Parameters
     ----------
     profiles : dict
-        Output of ``WACCMAtmosphere.get_column_profiles()``.
-    alt_m : np.ndarray
+        Result of :meth:`cesm_hawc.waccm.WACCMAtmosphere.get_column_profiles`.
+    alt_m : numpy.ndarray
         Altitude grid [m], matching ``profiles["altitudes_m"]``.
     sim_geometry : dict
-        Geometry/instrument keys for ``simulator.run()``, e.g.
-        ``tangent_latitude``, ``tangent_longitude``, ``altitude_grid``,
-        ``polarization_states``, ``sample_wavelengths``, ``time``, and
-        optionally ``observer_latitude``/``observer_longitude``/
-        ``observer_altitude`` or ``tangent_solar_zenith_angle``/
-        ``tangent_solar_azimuth_angle``. Must NOT include ``constituents``
-        or ``l1b_cfg`` — those are set from ``profiles``/``noise_model``.
+        Inputs for ``simulator.run()``: ``tangent_latitude``,
+        ``tangent_longitude``, ``altitude_grid``, ``polarization_states``,
+        ``sample_wavelengths`` and ``time``, plus either
+        ``observer_latitude``/``observer_longitude``/``observer_altitude``
+        or ``tangent_solar_zenith_angle``/``tangent_solar_azimuth_angle``.
+        Must not include ``constituents`` or ``l1b_cfg``, which this
+        function sets.
     simulator : IdealALISimulator, optional
-        Reused simulator instance. A new one is constructed if omitted.
-    products : tuple of str
-        Products to request from ``simulator.run()``.
-    noise_model : ALINoiseModel
-        Required (keyword-only) -- passed as
-        ``sim_input["l1b_cfg"]["noise_model"]``. Use
-        ``cesm_hawc.noise.default_noise_model()`` rather than constructing
-        one directly.
-    return_extinction : bool
-        If True, also build and return the true per-mode extinction
-        profiles (see ``constituents.build_waccm_constituents``).
+        Simulator to reuse. A new one is constructed if omitted.
+    products : tuple of str, optional
+        Products to request. Default :data:`DEFAULT_PRODUCTS`.
+    noise_model : hawcsimulator.noise.ALINoiseModel
+        Required. Use :func:`cesm_hawc.noise.default_noise_model`.
+    return_extinction : bool, optional
+        Also return the truth extinction. Default False.
     truth_wavelengths_nm : array-like, optional
-        Wavelengths for the truth extinction, if ``return_extinction``.
+        Wavelengths [nm] for the truth extinction. Default ``[745.0]``.
 
     Returns
     -------
     data : dict
-        The raw ``simulator.run()`` result.
-    true_extinction : dict, optional
-        Only returned if ``return_extinction=True``.
+        The ``simulator.run()`` result, keyed by product name.
+    true_extinction : dict
+        Only if ``return_extinction`` is True; see
+        :func:`cesm_hawc.constituents.build_waccm_constituents`.
+
+    Raises
+    ------
+    ValueError
+        If ``noise_model`` is None. The ``ideal_dolp_imager`` instrument
+        model has no noiseless mode.
     """
     if noise_model is None:
         raise ValueError(
@@ -123,41 +141,44 @@ def run_ali_simulation(
     run_l2: bool = False,
     noise_model: ALINoiseModel,
 ) -> dict:
-    """
-    Run the HAWC ALI simulator on one column of a WACCM history file, at a
-    fixed tangent point and solar geometry.
+    """Simulate one column of a WACCM history file at a fixed geometry.
 
     Parameters
     ----------
     waccm_file : str
-        Path to a CAM history file (any stream, e.g. h0 or h2).
+        CAM history file (any stream, e.g. h0 or h2).
     lat, lon : float
         Tangent point [degrees].
-    time_index : int
-        Time index within the file (0-based).
-    sza_deg, saa_deg : float
+    time_index : int, optional
+        Time slice within the file. Default 0.
+    sza_deg, saa_deg : float, optional
         Solar zenith and azimuth angles at the tangent point [degrees].
-    obs_time : str or pd.Timestamp
+        Defaults 60 and 0.
+    obs_time : str or pandas.Timestamp, optional
         Observation time.
     wavelengths_nm : array-like, optional
-        Simulated wavelengths [nm]. Default [470, 745, 1020].
+        Simulated wavelengths [nm]. Default ``[470, 745, 1020]``.
     alt_grid_m : array-like, optional
-        Altitude grid [m]. Default 0–65 km in 1 km steps.
-    run_l2 : bool
+        Altitude grid [m]. Default 0–65 km every 1 km.
+    run_l2 : bool, optional
         Also run the L2 retrieval. Default False (forward model only).
-    noise_model : ALINoiseModel
-        Required (keyword-only). Use ``cesm_hawc.noise.default_noise_model()``.
-        The ``ideal_dolp_imager`` instrument model has no noiseless mode.
+    noise_model : hawcsimulator.noise.ALINoiseModel
+        Required. Use :func:`cesm_hawc.noise.default_noise_model`.
 
     Returns
     -------
-    dict with keys:
-        data             : the raw ``simulator.run()`` result (``l1b``, and
-                           ``l2`` when ``run_l2``)
-        true_extinction  : per-mode truth extinction at ``wavelengths_nm``
-                           (see ``constituents.build_waccm_constituents``)
-        burden           : ``WACCMAtmosphere.sulfate_column_burden()`` for
-                           the column
+    dict
+        ``data``: the ``simulator.run()`` result (``l1b``, plus ``l2`` when
+        ``run_l2``). ``true_extinction``: truth extinction at
+        ``wavelengths_nm`` (see
+        :func:`cesm_hawc.constituents.build_waccm_constituents`).
+        ``burden``: the column's sulfate burden (see
+        :meth:`cesm_hawc.waccm.WACCMAtmosphere.sulfate_column_burden`).
+
+    Raises
+    ------
+    ValueError
+        If ``noise_model`` is None.
 
     Examples
     --------

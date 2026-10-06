@@ -1,8 +1,10 @@
-"""
-cesm_hawc.convergence
-======================
-L2 retrieval convergence diagnostics.
+"""Convergence diagnostics for the L2 retrieval.
 
+The retrieval's output dataset carries no reliable convergence flag. The
+dependable source is the ``verbose=2`` output that
+``scipy.optimize.least_squares`` prints during the retrieval: capture
+stdout around the call (e.g. with ``contextlib.redirect_stdout``) and pass
+it to :func:`parse_scipy_convergence`.
 """
 
 from __future__ import annotations
@@ -22,10 +24,22 @@ _NFEV_PATTERN = re.compile(r"Function evaluations (\d+)")
 
 
 def parse_scipy_convergence(captured_stdout: str) -> dict:
-    """Parse ``scipy.optimize.least_squares``' ``verbose=2`` stdout for the
-    real convergence status and function-evaluation count. Returns
-    ``{converged, termination_reason, n_function_evaluations}``, with
-    ``None`` values if no recognized message was found."""
+    """Read the convergence status from ``least_squares`` verbose output.
+
+    Parameters
+    ----------
+    captured_stdout : str
+        Everything ``scipy.optimize.least_squares(..., verbose=2)`` printed
+        during one retrieval.
+
+    Returns
+    -------
+    dict
+        ``converged`` (bool), ``termination_reason`` (``"ftol"``,
+        ``"xtol"``, ``"gtol"``, ``"max_nfev"`` or ``"max_iter"``) and
+        ``n_function_evaluations`` (int). Each value is ``None`` if no
+        recognized message was found.
+    """
     result = {"converged": None, "termination_reason": None, "n_function_evaluations": None}
 
     for pattern, reason in _CONVERGED_PATTERNS:
@@ -48,8 +62,21 @@ def parse_scipy_convergence(captured_stdout: str) -> dict:
 
 
 def extract_l2_native_diagnostics(l2_obj) -> dict:
-    """Pull ``num_iterations``/``cost`` directly off the l2 Dataset, as a
-    cross-check against the stdout-parsed convergence info."""
+    """Read the iteration count and final cost from an L2 dataset.
+
+    Use these as a cross-check on :func:`parse_scipy_convergence`.
+
+    Parameters
+    ----------
+    l2_obj : xarray.Dataset or None
+        The ``"l2"`` product from ``simulator.run()``.
+
+    Returns
+    -------
+    dict
+        ``l2_num_iterations`` (int) and ``l2_final_cost`` (float), each
+        ``None`` if missing or unreadable.
+    """
     if l2_obj is None:
         return {"l2_num_iterations": None, "l2_final_cost": None}
     try:

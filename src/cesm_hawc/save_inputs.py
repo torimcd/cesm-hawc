@@ -1,14 +1,8 @@
-"""
-cesm_hawc.save_inputs
-======================
-Save a WACCM column as a simulator-ready input file.
+"""Save WACCM columns as simulator-ready NetCDF files.
 
-``save_column_inputs()`` always saves the same WACCM-derived profile
-fields as ``WACCMAtmosphere.save_column_profiles()``. When ``sasktran2``
-is importable, it additionally saves the constituents-level data an
-external ``hawcsimulator``/``sasktran2`` user needs to reconstruct the
-simulator's aerosol/gas constituent objects directly. See the README's 
-"Consuming saved inputs externally" section for a complete example.
+The files can drive ``hawcsimulator`` directly, with native ``sasktran2``
+calls and no ``cesm_hawc`` import; the documentation's "Using saved inputs"
+page has a complete example.
 """
 
 from __future__ import annotations
@@ -23,36 +17,54 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
                         time_index: int, alt_m: np.ndarray,
                         wavelengths_nm=None, profiles_only: bool = False,
                         obs_time=None, extra_attrs: dict | None = None) -> None:
-    """
-    Extract one WACCM column and save it as a simulator-ready input file.
+    """Extract one WACCM column and save it as a simulator-ready file.
 
     Parameters
     ----------
     waccm : cesm_hawc.waccm.WACCMAtmosphere
+        The opened history file.
     lat, lon : float
-        Column coordinates [degrees].
+        Column location [degrees].
     output_path : str
-        Output NetCDF path.
+        NetCDF file to write.
     time_index : int
-        Time slice index within the source file.
-    alt_m : np.ndarray
-        Altitude grid [m] -- must match ``waccm``'s own grid.
+        Time slice within the history file.
+    alt_m : numpy.ndarray
+        Altitude grid [m]; must match ``waccm.alt_grid_m``.
     wavelengths_nm : array-like, optional
-        Wavelengths [nm] to save truth extinction at, when sasktran2 is
-        available. Defaults to [745.0] if not given (see
-        ``build_waccm_constituents``).
+        Wavelengths [nm] for the truth extinction, when constituents are
+        saved. Default ``[745.0]``.
     profiles_only : bool, optional
-        If True, skip the constituents computation even when sasktran2 is
-        available (e.g. for minimal-footprint massive batch runs).
+        Save only the WACCM profiles, even if ``sasktran2`` is installed.
         Default False.
     obs_time : optional
-        Observation time (e.g. a ``pd.Timestamp``), saved as the ``time``
-        attr so a later simulator run from this file can use the same time.
-        Not saved if omitted.
+        Observation time (e.g. a ``pandas.Timestamp``), saved as the
+        ``time`` attribute. Not saved if omitted.
     extra_attrs : dict, optional
-        Further global attributes to save, e.g. observation geometry
-        (``observer_latitude``, ``observer_longitude``,
-        ``observer_altitude``).
+        Further global attributes, e.g. ``observer_latitude``,
+        ``observer_longitude`` and ``observer_altitude``.
+
+    Notes
+    -----
+    The file always holds the profiles from
+    :meth:`~cesm_hawc.waccm.WACCMAtmosphere.get_column_profiles` on the
+    ``altitude_m`` dimension. When ``sasktran2`` is installed and
+    ``profiles_only`` is False, it also holds, for each mode
+    (``aerosol_accum``, ``aerosol_coarse``):
+
+    - ``{mode}_extinction_per_m`` (``wavelength_nm``, ``altitude_m``):
+      truth extinction [m⁻¹];
+    - ``{mode}_reference_extinction_per_m`` (``altitude_m``): extinction at
+      745 nm [m⁻¹];
+    - ``{mode}_median_radius_nm`` (``altitude_m``): clipped median radius
+      [nm];
+
+    plus the attributes needed to rebuild the Mie databases:
+    ``extinction_reference_wavelength_nm``, ``mode_width_accum``,
+    ``mode_width_coarse``, ``mie_refractive_index``,
+    ``mie_wavelength_grid_nm`` and ``mie_median_radius_grid_nm``. The
+    ``includes_constituents`` attribute (0 or 1) records which kind of file
+    it is.
     """
     profiles = waccm.get_column_profiles(lat, lon, time_index)
 

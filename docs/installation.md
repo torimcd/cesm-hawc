@@ -43,10 +43,10 @@ python -c "import sasktran2, hawcsimulator; print('sim tier OK')"
 
 The `[sim]` tier builds several Mie scattering databases the first time it
 runs, and caches them on disk. Expect the first simulation to take noticeably
-longer than later ones. Batch and orbit modes build these caches once in the
-main process before starting workers.
+longer than later ones. The CLI builds these caches once in the main process
+before starting worker processes.
 
 ## HPC clusters
 
 See [Running on HPC](user-guide/hpc.md) for the Alliance Canada setup script
-and SLURM templates.
+and the SLURM job script.

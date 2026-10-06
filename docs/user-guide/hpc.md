@@ -1,8 +1,8 @@
 # Running on HPC
 
-Large batch and orbit runs are designed for a single many-core cluster node:
-one process per core, with jobs (months, days or orbit files) spread across
-them.
+Large runs are designed for a single many-core cluster node: one worker
+process per core, with jobs spread across them. A job is one history file in
+`fixed` mode, and one day (or one sub-daily history file) in `orbit` mode.
 
 ## Setting up the environment (Alliance Canada)
 
@@ -60,10 +60,11 @@ an hour.
   profile. Request memory per core with a margin rather than filling the
   node; `sacct -j <jobid> --format=JobID,MaxRSS,State` shows what a finished
   job actually used.
-- **Workers are recycled after each day** when `run_l2 = true`, which limits
+- **Workers are replaced after each job** when `run_l2 = true`, which limits
   memory growth within a long-lived process.
-- **Interrupted runs resume.** Re-submit the same command; finished days are
-  skipped and, with `run_l2 = true`, finished profiles within a day are too.
+- **Interrupted runs resume.** Re-submit the same command; finished jobs are
+  skipped and, in `orbit` mode with `run_l2 = true`, so are finished profiles
+  within a day.
 - **Compute nodes without internet are fine.** cesm-hawc turns off astropy's
   automatic Earth-orientation downloads.
 

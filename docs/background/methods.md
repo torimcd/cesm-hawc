@@ -133,9 +133,9 @@ seeded, so repeated runs draw different noise.
 In `orbit` mode, observations come from real orbit files but are
 placed on the simulated model dates:
 
-1. The case's h2 dates are sorted, and the *n*-th date uses orbit day
-   *n* mod *D*, where *D* is the number of days the orbit set spans. Gaps in
-   the h2 files shift this pairing.
+1. The dates of the case's history files are sorted, and the *n*-th date
+   uses orbit day *n* mod *D*, where *D* is the number of days the orbit set
+   spans. Gaps in the history files shift this pairing.
 2. From that orbit day's files, observations are taken every
    `obs_cadence_s` seconds at `center_pixel`. The starting offset is
    rotated from file to file, so that successive orbits sample different

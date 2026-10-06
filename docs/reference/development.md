@@ -18,7 +18,7 @@ pytest
 
 Tests that need `sasktran2` or `hawcsimulator` are skipped automatically when
 those aren't installed, so the base-tier tests run in a minimal environment.
-Fixture-based tests use the small example columns bundled in
+Fixture-based tests use the small example column bundled in
 `src/cesm_hawc/data/` and need no external data.
 
 ## Building the documentation

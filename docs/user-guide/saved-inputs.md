@@ -19,8 +19,10 @@ Every file contains the extracted WACCM profile on `altitude_m` [m]:
 | `sulfate_a1_N_cm3`, `sulfate_a3_N_cm3` | cm⁻³ | Accumulation / coarse mode number concentration |
 | `sulfate_a1_r_um`, `sulfate_a3_r_um` | μm | Accumulation / coarse mode median radius |
 
-with attributes `latitude`, `longitude`, `time_index`, `sigma_a1` and
-`sigma_a3`.
+with attributes `latitude`, `longitude`, `time_index`, `sigma_a1`,
+`sigma_a3` and `time` (the observation time). Files from `orbit` mode also
+record the satellite position as `observer_latitude`, `observer_longitude`
+[degrees] and `observer_altitude` [m].
 
 When `sasktran2` was installed at save time (and `--profiles-only` was not
 used), the file also holds, for each mode `aerosol_accum` and
@@ -82,12 +84,12 @@ constituents = {
 sim_input = {
     "tangent_latitude": ds.attrs["latitude"],
     "tangent_longitude": ds.attrs["longitude"],
-    "tangent_solar_zenith_angle": 60.0,
+    "tangent_solar_zenith_angle": 60.0,   # or, for orbit files, the observer_* attrs
     "tangent_solar_azimuth_angle": 0.0,
     "altitude_grid": alt_m,
     "polarization_states": ["I", "dolp"],
     "sample_wavelengths": [470.0, 745.0, 1020.0],
-    "time": "2035-02-01T12:00:00Z",      # your own observation time
+    "time": ds.attrs["time"],
     "l1b_cfg": {"noise_model": ALINoiseModel(straylight_fraction=0.0)},
     "constituents": constituents,
 }

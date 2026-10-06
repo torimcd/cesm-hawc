@@ -34,7 +34,7 @@ jobs:
           node-version: "20"
 
       - name: Install tools
-        run: pip install "jupyter-book>=2" ruff
+        run: pip install "jupyter-book>=2" "ruff==0.16.*"
 
       # The API generator relies on numpydoc-style docstrings.
       - name: Check docstrings

@@ -44,8 +44,7 @@ where = ["src"]
 cesm_hawc = ["data/*.nc"]
 
 [tool.ruff.lint]
-# Docstring checks (numpydoc style). Run with: ruff check src/
-extend-select = ["D"]
+select = ["E4", "E7", "E9", "F", "D"]
 ignore = ["D105", "D107"]  # magic methods; __init__ is documented on the class
 
 [tool.ruff.lint.pydocstyle]

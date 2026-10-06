@@ -633,9 +633,7 @@ def _run(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
     warm_mode_databases()
     warm_retrieval_optical_database()
 
-    # Recycle workers after each job when running L2: retrieval state not
-    # released between jobs was a real source of OOM kills in long runs.
-    # See cesm_hawc.dispatch.
+    # With L2, replace each worker after one job to limit memory growth.
     max_tasks_per_child = 1 if s.run_l2 else None
     results = run_jobs(worker, jobs, s.n_workers, max_tasks_per_child=max_tasks_per_child,
                        on_result=lambda r: log.info(r))

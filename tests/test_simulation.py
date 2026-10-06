@@ -13,13 +13,13 @@ from cesm_hawc.simulation import DEFAULT_PRODUCTS, run_ali_simulation_from_profi
 from conftest import ALT_GRID_M, load_profiles_dict
 
 
-def test_run_ali_simulation_from_profiles_smoke(example_background_column_path):
+def test_run_ali_simulation_from_profiles_smoke(example_column_path):
     """End-to-end forward-model + L2 retrieval smoke test against the
     bundled example fixture.
 
     Explicit noise_model is required: IdealALISimulator (ideal_dolp_imager)
     has no noiseless fallback, omitting it raises AttributeError."""
-    profiles = load_profiles_dict(example_background_column_path)
+    profiles = load_profiles_dict(example_column_path)
     sim_geometry = {
         "tangent_latitude": 30.6,
         "tangent_longitude": 180.0,

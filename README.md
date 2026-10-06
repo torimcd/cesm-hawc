@@ -10,14 +10,14 @@ Given CESM/WACCM history output (monthly `h0` or daily `h2` files), this
 package:
 
 1. Extracts one or many atmospheric columns (T, P, O₃, MAM4 sulfate aerosol)
-2. Converts MAM4 modal aerosol to extinction profiles using the ALI Mie database
-3. Runs the `IdealALISimulator` forward model + L2 retrieval
+2. Converts MAM4 modal aerosol to extinction profiles using mode-matched Mie databases
+3. Runs the `IdealALISimulator` forward model and, optionally, the L2 retrieval
 4. Outputs retrieved aerosol extinction and median radius profiles
 
 Requires Python >=3.11. It has two tiers:
 
 - **Base** (`pip install cesm-hawc`) — WACCM column extraction and saving
-  simulator/L2 inputs at monthly or daily scale. Only needs
+  simulator-ready inputs. Only needs
   numpy/xarray/scipy/pandas.
 - **`[sim]` extra** (`pip install cesm-hawc[sim]`) — the full forward model
   and L2 retrieval, via `hawcsimulator` + `sasktran2`.
@@ -52,123 +52,63 @@ dependencies, and registers the package. It takes 5–10 minutes on first run.
 
 ## Quick start
 
-### Python API
-
-```python
-from cesm_hawc.waccm import WACCMAtmosphere
-from cesm_hawc.constituents import build_waccm_constituents
-from cesm_hawc.simulation import run_ali_simulation
-
-# Point at your WACCM h0 or h2 file
-result = run_ali_simulation(
-    background_file = "path/to/background.cam.h0.nc",
-    injection_file  = "path/to/injection.cam.h0.nc",
-    lat=30.6, lon=180.0,
-    time_index=0,
-)
-
-print(result["peak_extinction_anomaly_m"])   # m⁻¹
-print(result["peak_radius_anomaly_nm"])       # nm
-print(result["delta_burden_mg_m2"])           # mg SO₄ m⁻²
-```
-
 ### CLI
 
-Copy `config.example.toml` to `config.toml` and fill in your paths, then:
+Copy `config.example.toml` to `config.toml` and fill in your paths. Each run
+processes one model case, described by the `[case]` table, and writes under
+`out_dir/<case name>/`.
 
 ```bash
 # Base tier: extract and save WACCM column inputs, no [sim] extra needed
-cesm-hawc save-inputs --config config.toml --mode single
+cesm-hawc save-inputs --config config.toml --mode fixed
 
-# [sim] tier: run the full forward model + L2 retrieval end to end
-cesm-hawc run --config config.toml --mode single
+# [sim] tier: run the forward model (+ L2 retrieval if run_l2 = true)
+cesm-hawc run --config config.toml --mode fixed
 ```
 
-`--mode` selects the scale:
+`--mode` selects how the model is sampled:
 
-| Mode | Scale | Config section |
-|------|-------|-----------------|
-| `single` | one column, one file | `[single]` + `[geometry]` |
-| `batch` | a directory of monthly h0 files | `[batch]` + `[geometry]` |
-| `orbit-track` | a real orbit ground track matched to one CESM case's daily h2 files | `[orbit]` |
-| `orbit-file` | real per-orbit-file, per-pixel observations matched to daily h2 files | `[orbit_real]` |
+| Mode | Samples | Config table |
+|------|---------|--------------|
+| `fixed` | one column at a fixed tangent point and solar geometry, per history file | `[fixed]` |
+| `orbit` | columns along a real HAWC orbit ground track, moved onto the case's dates | `[orbit]` |
 
-Add `--dry-run` to see the job count without running anything, `--n-workers N`
-to override the config's worker count, and `--out-dir PATH` to override the
-output directory. Run `cesm-hawc save-inputs --help` / `cesm-hawc run --help`
-for the full flag list.
+Add `--dry-run` to see the job count without running anything, and
+`--case-name NAME` to run a different case from the same config. Run
+`cesm-hawc save-inputs --help` / `cesm-hawc run --help` for the full flag
+list.
+
+### Python API
+
+```python
+import cesm_hawc
+from cesm_hawc.noise import default_noise_model
+from cesm_hawc.simulation import run_ali_simulation
+
+cesm_hawc.configure_environment()   # once per process; the CLI does this for you
+
+result = run_ali_simulation(
+    "path/to/my_case.cam.h0.2035-02.nc",
+    lat=30.6, lon=180.0,
+    run_l2=True,
+    noise_model=default_noise_model(),
+)
+l2 = result["data"]["l2"]   # retrieved extinction, median radius, ...
+```
 
 Library users calling into `cesm_hawc.orbit_files`, `cesm_hawc.calibration`,
 or `cesm_hawc.simulation` directly (rather than through the CLI) should call
 `cesm_hawc.configure_environment()` once at startup — it disables astropy's
 IERS auto-download, silences noisy third-party logging, and patches a known
-`hawcsimulator` calibration-cache race condition. The CLI calls this
-automatically.
+`hawcsimulator` calibration-cache race condition.
 
-## Consuming saved inputs externally
+## Using saved inputs without cesm-hawc
 
-`save-inputs` doesn't just save the raw WACCM profile (T, P, humidity, gas
-VMRs, per-mode sulfate number density/radius) — when `sasktran2` is
-importable at save time (i.e. you're in the `[sim]`-capable environment),
-it *also* saves everything needed to reconstruct the simulator's aerosol/gas
-constituent objects: per-mode extinction (at the 745 nm reference
-wavelength `ExtinctionScatterer` uses, plus a multi-wavelength "truth"
-array) and clipped median radius, alongside the Mie database's build
-parameters (`mie_refractive_index`, `mie_wavelength_grid_nm`,
-`mie_median_radius_grid_nm`, `mode_width_accum`, `mode_width_coarse`) as
-file attrs. Check a file's `includes_constituents` attr to see which shape
-it has (`--profiles-only` skips this even when `sasktran2` is available,
-for minimal-footprint massive batch runs).
-
-`sasktran2`'s constituent objects themselves can't be serialized to a file since they wrap live Mie-database state built from real scattering
-calculations, so this is the closest a file format
-can get: everything **except** the Mie database build itself is
-precomputed and saved. You can go straight from a saved file to a
-simulator run using only *native* `sasktran2` calls with this output, no `cesm_hawc` import required at all:
-
-```python
-import xarray as xr
-import sasktran2 as sk
-from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
-
-ds = xr.open_dataset("background_column.nc")
-assert ds.attrs["includes_constituents"], "file was saved with --profiles-only"
-alt_m = ds["altitude_m"].values
-
-def mode_constituent(mode: str) -> "sk.constituent.ExtinctionScatterer":
-    mode_width = ds.attrs[f"mode_width_{'accum' if mode == 'aerosol_accum' else 'coarse'}"]
-    mode_db = sk.database.MieDatabase(
-        sk.mie.distribution.LogNormalDistribution().freeze(mode_width=mode_width),
-        sk.mie.refractive.H2SO4(),          # ds.attrs["mie_refractive_index"]
-        ds.attrs["mie_wavelength_grid_nm"],
-        median_radius=ds.attrs["mie_median_radius_grid_nm"],
-    )
-    return sk.constituent.ExtinctionScatterer(
-        mode_db, altitudes_m=alt_m,
-        extinction_per_m=ds[f"{mode}_reference_extinction_per_m"].values,
-        extinction_wavelength_nm=ds.attrs["extinction_reference_wavelength_nm"],
-        median_radius=ds[f"{mode}_median_radius_nm"].values,
-    )
-
-constituents = {
-    "o3":  sk.constituent.VMRAltitudeAbsorber(sk.optical.O3DBM(), altitudes_m=alt_m, vmr=ds["vmr_o3"].values),
-    "no2": sk.constituent.VMRAltitudeAbsorber(sk.optical.NO2Vandaele(), altitudes_m=alt_m, vmr=ds["vmr_no2"].values),
-    "aerosol_accum":  mode_constituent("aerosol_accum"),
-    "aerosol_coarse": mode_constituent("aerosol_coarse"),
-}
-
-sim_input = {
-    "tangent_latitude": ds.attrs["latitude"],
-    "tangent_longitude": ds.attrs["longitude"],
-    "altitude_grid": alt_m,
-    "polarization_states": ["I", "dolp"],
-    "sample_wavelengths": [470.0, 745.0, 1020.0],
-    "time": "2035-02-01T12:00:00Z",   # your own observation time
-    "constituents": constituents,
-}
-data = IdealALISimulator().run(["l2", "front_end_radiance", "l1b"], sim_input)
-```
-
+When `sasktran2` is installed, each file written by `save-inputs` contains
+everything needed to rebuild the simulator's aerosol and gas constituents
+with native `sasktran2` calls: per-mode reference and truth extinction,
+clipped median radius, and the Mie database build parameters as attributes.
+The documentation's "Using saved inputs" page has a complete example.
 
 ## Required WACCM output variables
 
@@ -192,5 +132,5 @@ pytest
 
 Tests that need `sasktran2`/`hawcsimulator` are automatically skipped if
 those aren't installed. A small bundled example column
-(`src/cesm_hawc/data/example_column_*.nc`) is used for fixture-based tests
+(`src/cesm_hawc/data/example_column.nc`) is used for fixture-based tests
 and doesn't require any external data.

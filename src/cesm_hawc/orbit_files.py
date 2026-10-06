@@ -1,8 +1,9 @@
 """
 cesm_hawc.orbit_files
 ======================
-Real HAWC orbit-track NetCDF file handling: reading observation geometry
-(time/lat/lon/observer position) and indexing files by calendar day.
+HAWC orbit NetCDF file handling: reading observation geometry
+(time/lat/lon/observer position), indexing files by day since the orbit
+epoch, and converting simulator L1b output to a dataset.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 from pathlib import Path
 
 import numpy as np
@@ -20,8 +20,6 @@ import pandas as pd
 import xarray as xr
 
 log = logging.getLogger(__name__)
-
-_ORBIT_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
 def load_orbit_files(orbit_dir: str, pattern: str = "orbit_*.nc") -> list[str]:
@@ -39,30 +37,6 @@ def orbit_file_start_time(path: str) -> pd.Timestamp:
         return pd.Timestamp(ds.attrs["start_time"])
     finally:
         ds.close()
-
-
-def orbit_file_date(path: str) -> str:
-    """Return the ``YYYY-MM-DD`` calendar date of an orbit file, from its
-    ``start_time`` attribute, falling back to a date parsed from the
-    filename if the attribute is missing."""
-    try:
-        return str(orbit_file_start_time(path).date())
-    except (KeyError, ValueError):
-        m = _ORBIT_DATE_RE.search(os.path.basename(path))
-        if m:
-            return m.group(1)
-        raise ValueError(f"Cannot determine calendar date for orbit file: {path}")
-
-
-def collect_orbit_files_by_date(orbit_dir: str, pattern: str = "orbit_*.nc"
-                                 ) -> dict[str, list[str]]:
-    """Return ``{"YYYY-MM-DD": [orbit_path, ...]}`` grouped by calendar
-    date (an orbit file may cover only part of a day, so a date can map to
-    more than one file)."""
-    grouped: dict[str, list[str]] = {}
-    for p in load_orbit_files(orbit_dir, pattern):
-        grouped.setdefault(orbit_file_date(p), []).append(p)
-    return grouped
 
 
 def _orbit_files_fingerprint(orbit_files: list[str]) -> str:

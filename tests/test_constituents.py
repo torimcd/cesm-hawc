@@ -10,14 +10,14 @@ from cesm_hawc.constituents import build_waccm_constituents
 from conftest import ALT_GRID_M, load_profiles_dict
 
 
-def test_build_waccm_constituents_from_example_fixture(example_background_column_path):
-    profiles = load_profiles_dict(example_background_column_path)
+def test_build_waccm_constituents_from_example_fixture(example_column_path):
+    profiles = load_profiles_dict(example_column_path)
     constituents = build_waccm_constituents(profiles, ALT_GRID_M)
     assert set(constituents.keys()) == {"o3", "no2", "aerosol_accum", "aerosol_coarse"}
 
 
-def test_build_waccm_constituents_return_extinction(example_background_column_path):
-    profiles = load_profiles_dict(example_background_column_path)
+def test_build_waccm_constituents_return_extinction(example_column_path):
+    profiles = load_profiles_dict(example_column_path)
     wavelengths = np.array([470.0, 745.0, 1020.0])
     constituents, true_ext = build_waccm_constituents(
         profiles, ALT_GRID_M, return_extinction=True, truth_wavelengths_nm=wavelengths

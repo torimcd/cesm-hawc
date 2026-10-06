@@ -22,7 +22,7 @@ import xarray as xr
 def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
                         time_index: int, alt_m: np.ndarray,
                         wavelengths_nm=None, profiles_only: bool = False,
-                        obs_time=None) -> None:
+                        obs_time=None, extra_attrs: dict | None = None) -> None:
     """
     Extract one WACCM column and save it as a simulator-ready input file.
 
@@ -46,12 +46,13 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         available (e.g. for minimal-footprint massive batch runs).
         Default False.
     obs_time : optional
-        Real observation timestamp (e.g. a ``pd.Timestamp``), if known --
-        saved as the ``time`` attr so a later simulator run from this file
-        can match the original observation's time instead of guessing.
-        Not saved if omitted (e.g. `single`/`batch` modes without a real
-        per-observation time).
-
+        Observation time (e.g. a ``pd.Timestamp``), saved as the ``time``
+        attr so a later simulator run from this file can use the same time.
+        Not saved if omitted.
+    extra_attrs : dict, optional
+        Further global attributes to save, e.g. observation geometry
+        (``observer_latitude``, ``observer_longitude``,
+        ``observer_altitude``).
     """
     profiles = waccm.get_column_profiles(lat, lon, time_index)
 
@@ -70,6 +71,8 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
     }
     if obs_time is not None:
         attrs["time"] = str(obs_time)
+    if extra_attrs:
+        attrs.update(extra_attrs)
 
     if profiles_only:
         _constituents_available = False

@@ -2,36 +2,49 @@
 
 The CLI reads a TOML file, `config.toml` by default. Start from
 `config.example.toml` in the repository root, which lists every table with
-comments. Each table is optional; a mode reports which tables it needs if
-they are missing. Paths in `out_dir`, `orbit_dir`, `waccm_data_dir` and the
-`orbit_real` directories may start with `~`.
+comments.
 
-Keys without a default are required whenever their table is present.
+- `[case]` is required.
+- `[fixed]` and `[orbit]` are needed only by their own mode.
+- `[instrument]` is optional; its defaults are listed below.
 
-## `[single]`
+Paths may start with `~`. Keys without a default are required whenever their
+table is present.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `waccm_background` | path | — | WACCM history file for the reference run |
-| `waccm_injection` | path | `""` | WACCM history file for the injection run; `""` skips it |
-| `time_idx` | int | `0` | Time index within the file |
-| `obs_time` | ISO time | — | Observation time, used for solar position |
-| `out_dir` | path | — | Output directory |
+## `[case]`
 
-## `[batch]`
+The model case to process, where to write, and options shared by both modes.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `waccm_background_dir` | path | — | Directory of background h0 files |
-| `waccm_injection_dir` | path | `""` | Directory of injection h0 files; `""` skips them |
-| `h0_pattern` | glob | `"*.cam.h0.*.nc"` | File pattern in both directories |
-| `month_filter` | list of `"YYYY-MM"` | `[]` | Months to run; `[]` runs all |
-| `out_dir` | path | — | Output directory |
+| `name` | string | — | Free-form label for the case; output goes to `out_dir/<name>/` |
+| `waccm_dir` | path | — | Directory of CAM history files. `{name}` is replaced by the case name |
+| `pattern` | glob | — | Which files to read, e.g. `"*.cam.h0.*.nc"` or `"*.cam.h2.*.nc"` |
+| `out_dir` | path | — | Output root |
 | `n_workers` | int | `1` | Worker processes |
+| `time_index` | int | `0` | Time slice to read within each history file |
+| `start_date`, `end_date` | `"YYYY-MM-DD"` | `""` | Optional date range, using the date in each file name; `""` means unbounded |
+| `run_l2` | bool | `false` | Also run the L2 retrieval (`run` only). Takes minutes per profile |
+| `strip_ozone` | bool | `false` | Zero WACCM ozone before simulating (`run` only); output goes to `<name>_no_ozone/` |
 
-## `[geometry]`
+The `{name}` placeholder lets one config serve several cases stored side by
+side. With
 
-Used by `single` and `batch`.
+```toml
+waccm_dir = "/archive/{name}/atm/hist/"
+```
+
+`cesm-hawc run --mode orbit --case-name another_case` reads
+`/archive/another_case/atm/hist/` and writes to `out_dir/another_case/`.
+
+```{note}
+`time_index` applies to every file. If your history files hold more than one
+time sample each (`mfilt` > 1), only that one sample is used.
+```
+
+## `[fixed]`
+
+Used by `--mode fixed`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -39,10 +52,11 @@ Used by `single` and `batch`.
 | `tangent_lon` | degrees | — | Tangent-point longitude (−180–180 or 0–360) |
 | `sza_deg` | degrees | `60.0` | Solar zenith angle at the tangent point |
 | `saa_deg` | degrees | `0.0` | Solar azimuth angle at the tangent point |
+| `obs_time` | ISO time | from file name | Observation time for every file (see [Run modes](run-modes.md#fixed)) |
 
 ## `[orbit]`
 
-Used by `orbit-track`.
+Used by `--mode orbit`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -50,32 +64,8 @@ Used by `orbit-track`.
 | `orbit_pattern` | glob | `"orbit_*.nc"` | Orbit file pattern |
 | `orbit_epoch` | date | `"2019-08-01"` | Time origin of the orbit file set; orbit `time` values are seconds since this date |
 | `center_pixel` | int | `256` | Across-track pixel used as the tangent point |
-| `waccm_data_dir` | path | — | CESM archive root containing `<case_name>/atm/hist/` |
-| `case_name` | string | — | The CESM case this run processes |
-| `h2_pattern` | glob | `"*.cam.h2.*.nc"` | h2 file pattern |
-| `h2_cadence` | `"daily"` or `"subdaily"` | `"daily"` | Use `"subdaily"` when there is more than one h2 file per date |
 | `obs_cadence_s` | seconds | `60.0` | Spacing between sampled observations |
-| `run_start_date`, `run_end_date` | `"YYYY-MM-DD"` | `""` | Optional date range; `""` means unbounded |
-| `run_l2` | bool | `false` | Also run the L2 retrieval for every observation |
-| `strip_ozone` | bool | `false` | Zero WACCM ozone before simulating (diagnostic) |
-| `out_dir` | path | — | Output directory |
-| `n_workers` | int | `1` | Worker processes (one job per day) |
-
-## `[orbit_real]`
-
-Used by `orbit-file`.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `orbit_dir` | path | — | Directory of orbit files |
-| `orbit_pattern` | glob | `"orbit_*.nc"` | Orbit file pattern |
-| `waccm_background_dir` | path | — | Directory of background h2 files |
-| `waccm_injection_dir` | path | `""` | Directory of injection h2 files; `""` skips them |
-| `h2_pattern` | glob | `"*.cam.h2.*.nc"` | h2 file pattern |
-| `across_indices` | list of int | `[]` | Across-track pixels to simulate; `[]` means all |
-| `time_stride` | int | `1` | Simulate every *N*-th orbit time step |
-| `out_dir` | path | — | Output directory |
-| `n_workers` | int | `1` | Worker processes (one job per orbit file) |
+| `h2_cadence` | `"daily"` or `"subdaily"` | `"daily"` | Use `"subdaily"` when there is more than one history file per date |
 
 ## `[instrument]`
 

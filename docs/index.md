@@ -52,7 +52,6 @@ flowchart TB
 | HAWC | High-altitude Aerosols, Water vapour and Clouds mission |
 | CESM2 / WACCM | Community Earth System Model v2 / Whole Atmosphere Community Climate Model |
 | MAM4 | Four-mode Modal Aerosol Module used by CESM2 |
-| SAI | Stratospheric aerosol injection |
 | h0 / h2 | CAM history file streams (here: monthly means / daily or sub-daily output) |
 | L1b / L2 | Calibrated radiances / retrieved geophysical profiles |
 | DoLP | Degree of linear polarization |

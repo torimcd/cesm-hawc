@@ -225,9 +225,8 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
     Mie database (not a shared, mismatched one) for both extinction
     magnitude AND phase function / wavelength scaling:
 
-    - ``aerosol_accum``  (so4_a1, sigma_g = 1.6): fresh SO2 injection signal
-    - ``aerosol_coarse`` (so4_a3, sigma_g = 1.2): aged sulfate, dominates ALI
-      extinction after ~2 weeks post-injection
+    - ``aerosol_accum``  (so4_a1, sigma_g = 1.6)
+    - ``aerosol_coarse`` (so4_a3, sigma_g = 1.2)
     """
     r_min = float(_MEDIAN_RADIUS_NM.min())
     r_max = float(_MEDIAN_RADIUS_NM.max())

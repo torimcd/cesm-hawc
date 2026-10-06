@@ -43,7 +43,7 @@ To add a page, create a Markdown (`.md`) or notebook (`.ipynb`) file under
 | `src/cesm_hawc/` | The package |
 | `tests/` | Unit tests |
 | `examples/` | Worked examples |
-| `scripts/` | Environment setup, SLURM templates and research scripts |
+| `scripts/` | HPC environment setup and the SLURM job script |
 | `docs/` | This documentation |
 | `config.example.toml` | Template configuration |
 

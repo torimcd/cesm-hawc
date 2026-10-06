@@ -4,103 +4,64 @@
 # config.toml is gitignored so local and HPC paths stay out of the repo.
 #
 # Used by the `cesm-hawc` CLI:
-#   cesm-hawc save-inputs --config config.toml --mode {single,batch,orbit-track,orbit-file}
-#   cesm-hawc run         --config config.toml --mode {single,batch,orbit-track,orbit-file}
+#   cesm-hawc save-inputs --config config.toml --mode {fixed,orbit}
+#   cesm-hawc run         --config config.toml --mode {fixed,orbit}
+#
+# Each run processes one model case and writes under out_dir/<name>/.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Single column, one file, end to end (--mode single) ───────────────────
-[single]
-waccm_background = "/path/to/background.cam.h0.YYYY-MM.nc"
-waccm_injection  = ""              # leave empty ("") to skip injection run
-time_idx         = 0              # time slice index within the file
-obs_time         = "2035-02-01T12:00:00Z"
-out_dir          = "~/results/hawc_ali/"
+# ── The model case (required, used by every mode) ─────────────────────────
+[case]
+name      = "my_case"                         # free-form label; output goes to out_dir/<name>/
+# Directory of CAM history files. "{name}" is replaced by the case name
+# (including a --case-name override), so one config can serve several
+# cases stored side by side.
+waccm_dir = "/path/to/archive/{name}/atm/hist/"
+pattern   = "*.cam.h2.*.nc"                   # which files to read, e.g. "*.cam.h0.*.nc" for monthly
+out_dir   = "~/results/cesm_hawc/"
+n_workers = 4                                 # parallel worker processes; 1 = serial
 
-# ── Batch: a directory of monthly h0 files (--mode batch) ─────────────────
-[batch]
-waccm_background_dir = "/path/to/background/atm/hist/"
-waccm_injection_dir  = ""          # leave empty ("") to skip injection run
-h0_pattern           = "*.cam.h0.*.nc"
-month_filter         = []          # e.g. ["2034-01", "2034-02"]; [] = all months
-out_dir              = "~/results/hawc_ali/"
-n_workers            = 4          # parallel worker processes; 1 = serial
+time_index = 0          # time slice within each history file
+start_date = ""         # optional date range ("YYYY-MM-DD"), "" = unbounded
+end_date   = ""
 
-# ── Observation geometry (shared by single/batch) ──────────────────────────
-[geometry]
-tangent_lat = 30.6    # degrees — match your SO₂ injection latitude
-tangent_lon = 180.0   # degrees
-sza_deg     = 60.0
-saa_deg     = 0.0
+run_l2      = false     # true = also run the L2 retrieval (slow: minutes per profile)
+# true = zero WACCM ozone before building the simulated atmosphere (a
+# diagnostic). Output goes to out_dir/<name>_no_ozone/ so it won't collide
+# with a normal run of the same case. Also settable with `run --strip-ozone`.
+strip_ozone = false
 
-# ── Orbit-track runs (--mode orbit-track) ──────────────────────────────────
-# A real HAWC orbit-track file set matched to one CESM case's daily h2
-# files by day-of-year offset from orbit_epoch, with optional full L2
-# retrieval. One case per run -- output lands under
-# out_dir/<case_name>/<date>/. To process multiple cases (background +
-# several injection magnitudes), run this mode once per case, each with
-# its own case_name.
+# ── Fixed tangent point (--mode fixed) ─────────────────────────────────────
+# One column per history file at this location and solar geometry.
+[fixed]
+tangent_lat = 30.6    # degrees
+tangent_lon = 180.0   # degrees, -180..180 or 0..360
+sza_deg     = 60.0    # solar zenith angle at the tangent point
+saa_deg     = 0.0     # solar azimuth angle at the tangent point
+# obs_time = "2035-02-01T12:00:00Z"   # optional; by default taken from each file name
+
+# ── Real orbit ground track (--mode orbit) ─────────────────────────────────
+# Observations sampled along real HAWC orbit files, moved onto the case's
+# dates: the n-th history-file date (sorted) uses orbit day n mod the number
+# of orbit days.
 [orbit]
-orbit_dir      = "/path/to/orbit/files/"
-orbit_pattern  = "orbit_*.nc"
-orbit_epoch    = "2019-08-01"   # orbit file set's own time origin
-center_pixel   = 256            # across-track index used as tangent point
-
-waccm_data_dir = "/path/to/cesm/output/archive/"   # root containing <casename>/atm/hist/
-h2_pattern     = "*.cam.h2.*.nc"
-case_name      = "sai_background_2035_001"         # the one CESM case this run processes
-
-# "daily" (default) assumes one h2 file per calendar date. Use "subdaily"
-# if your h2 output is written more than once per day (e.g. 12-hourly) --
-# with "daily", a directory holding more than one file per date silently
-# keeps only one of them (see cesm_hawc.file_index.index_by_date). Under
-# "subdaily", one job is dispatched per h2 file instead of per day, with
-# each observation matched to whichever h2 snapshot is nearest to it in
-# real time.
-h2_cadence     = "daily"
-
-obs_cadence_s  = 60.0     # seconds between simulated observations
-run_start_date = ""       # optional date-range restriction, "" = all
-run_end_date   = ""
-run_l2         = false    # true = also run full L2 retrieval (slow)
-
-# true = zero WACCM ozone VMR before building the simulated atmosphere, for
-# each day/observation -- an ozone-mismatch bias diagnostic (see
-# scripts/diagnose_bias_hypotheses.py for the small-scale version of this
-# same idea). Reads the SAME case's h2 files as a normal run but writes to
-# out_dir/<case_name>_no_ozone/ instead of out_dir/<case_name>/, so it
-# won't collide with or resume into a normal run of the same case.
-# Can also be set per-invocation via `cesm-hawc run --strip-ozone` without
-# editing this file (e.g. to queue both variants off one shared config).
-strip_ozone    = false
-
-out_dir   = "~/results/hawc_ali_orbit/"
-n_workers = 4          # parallel worker processes (by day); 1 = serial
-
-# ── Per-orbit-file, per-pixel runs (--mode orbit-file) ─────────────────────
-[orbit_real]
 orbit_dir     = "/path/to/orbit/files/"
 orbit_pattern = "orbit_*.nc"
+orbit_epoch   = "2019-08-01"   # time origin of the orbit file set
+center_pixel  = 256            # across-track pixel used as the tangent point
+obs_cadence_s = 60.0           # seconds between sampled observations
 
-waccm_background_dir = "/path/to/background/atm/hist/"
-waccm_injection_dir  = ""              # leave empty ("") to skip injection run
-h2_pattern           = "*.cam.h2.*.nc"
+# "daily" (default) assumes one history file per calendar date. Use
+# "subdaily" if output is written more than once per day (e.g. 12-hourly):
+# one job then runs per file, with each observation matched to the nearest
+# snapshot in time. With "daily", only one file per date would be kept.
+h2_cadence    = "daily"
 
-out_dir   = "~/results/hawc_ali_orbit_real/"
-n_workers = 4                          # parallel worker processes (by orbit file); 1 = serial
-
-# Which across-track pixel indices to simulate.
-# [] = all 512 pixels (slow); [256] = center pixel only (fast smoke test).
-across_indices = [256]
-
-# Process every Nth time step along the orbit. 1 = every second (~4218/orbit).
-# Use 10 or 60 to subsample for faster runs.
-time_stride = 1
-
-# ── ALI instrument configuration (shared by all modes) ─────────────────────
+# ── ALI instrument configuration (every mode) ──────────────────────────────
 [instrument]
-# Wavelengths for the ideal spectrograph simulator [nm].
-# 3-channel quickstart (fast):  [470.0, 745.0, 1020.0]
-# Extended production set:      [470.0, 525.0, 745.0, 1020.0, 1230.0, 1450.0, 1500.0]
+# Simulated wavelengths [nm].
+# 3-channel quick set:   [470.0, 745.0, 1020.0]
+# Extended set:          [470.0, 525.0, 745.0, 1020.0, 1230.0, 1450.0, 1500.0]
 wavelengths_nm   = [470.0, 745.0, 1020.0]
 alt_grid_start_m = 0.0
 alt_grid_stop_m  = 65000.0   # inclusive upper bound [m]

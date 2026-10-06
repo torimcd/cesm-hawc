@@ -50,7 +50,7 @@ import sasktran2 as sk
 from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
 from hawcsimulator.noise import ALINoiseModel
 
-ds = xr.open_dataset("background_column.nc")
+ds = xr.open_dataset("my_case.cam.h0.2035-02.nc")   # a file written by save-inputs
 assert ds.attrs["includes_constituents"], "file was saved with --profiles-only"
 alt_m = ds["altitude_m"].values
 

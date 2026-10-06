@@ -19,25 +19,43 @@ This creates the `hawc_env` environment, installs cesm-hawc with the `[sim]`
 extra, and checks that `sasktran2`, `hawcsimulator` and `cesm_hawc` import.
 It takes 5–10 minutes the first time.
 
-## SLURM templates
+## SLURM job script
 
-The `scripts/` directory has SLURM job scripts to copy and adapt:
+`scripts/submit.sh` runs `cesm-hawc run --mode orbit` on one node. Before
+using it, set `--account` to your allocation, and create a `logs/` directory
+in the repository root; SLURM writes the job's output there and fails
+without it.
 
-| Script | Runs |
-|--------|------|
-| `scripts/submit.sh` | `cesm-hawc run --mode single` on one core |
-| `scripts/submit_orbit_daily.sh` | `cesm-hawc run --mode orbit-track` on a full node |
-| `scripts/submit_orbit_daily_l2.sh` | The same, taking the config, case name and an optional `strip-ozone` flag as arguments |
+```bash
+mkdir -p logs
+sbatch scripts/submit.sh                          # config.toml, configured case
+sbatch scripts/submit.sh config.toml case_a       # a different case
+sbatch scripts/submit.sh config.toml case_a strip-ozone
+```
 
-Before submitting, set `--account` to your allocation and make sure
-`n_workers` in `config.toml` equals `--cpus-per-task`.
+The arguments are, in order: the config file (default `config.toml`), a case
+name passed to `--case-name`, and the literal word `strip-ozone` to add
+`--strip-ozone`. Queuing one job per case name lets a single config drive
+several cases.
+
+The script asks for 32 cores with 12 GB each for 60 hours, and sets the
+worker count to the number of cores, overriding `n_workers` in the config.
+Change the resources at submit time rather than editing the script:
+
+```bash
+sbatch --cpus-per-task=16 --mem-per-cpu=8G --time=12:00:00 scripts/submit.sh
+```
+
+For `--mode fixed`, copy the script and change `--mode orbit` to
+`--mode fixed`. A handful of files usually needs only one core and well under
+an hour.
 
 ## Practical notes
 
 - **Pin threading to one per process.** Set `OMP_NUM_THREADS`,
   `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to 1
-  before starting Python. Otherwise each worker may start its own BLAS
-  threads and oversubscribe the node.
+  before starting Python (`submit.sh` does this). Otherwise each worker may
+  start its own BLAS threads and oversubscribe the node.
 - **Leave memory headroom.** L2 retrieval memory varies from profile to
   profile. Request memory per core with a margin rather than filling the
   node; `sacct -j <jobid> --format=JobID,MaxRSS,State` shows what a finished

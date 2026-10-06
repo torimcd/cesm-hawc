@@ -8,10 +8,12 @@ in your paths, then::
 
     from cesm_hawc.config import load_config
     cfg = load_config("config.toml")
-    cfg.geometry.tangent_lat
+    cfg.case.name
 
-Every ``out_dir``-style field is ``os.path.expanduser``'d at load time, so
-call sites never need to remember to do it themselves.
+A config has one required table, ``[case]`` (what to read and where to
+write), one table per run mode (``[fixed]``, ``[orbit]``) and an optional
+``[instrument]`` table. Every path is ``os.path.expanduser``'d at load
+time, so call sites never need to do it themselves.
 """
 
 from __future__ import annotations
@@ -38,151 +40,108 @@ def _expand(path: str | None) -> str | None:
 
 
 @dataclass(frozen=True)
-class SingleConfig:
-    """``[single]`` — one WACCM h0/h2 file, one column, end to end."""
-    waccm_background: str
-    waccm_injection: str | None
-    time_idx: int
-    obs_time: str
+class CaseConfig:
+    """``[case]`` — one model case: which history files to read, the label
+    its output is written under, and options shared by every run mode.
+
+    ``waccm_dir`` may contain a ``{name}`` placeholder, replaced by the
+    case name (including a ``--case-name`` override), so one config can
+    drive several cases stored side by side, e.g.
+    ``"/archive/{name}/atm/hist"``.
+    """
+    name: str
+    waccm_dir: str
+    pattern: str
     out_dir: str
+    n_workers: int = 1
+    time_index: int = 0
+    start_date: str | None = None
+    end_date: str | None = None
+    run_l2: bool = False
+    strip_ozone: bool = False
 
     @classmethod
-    def from_toml_dict(cls, d: dict) -> "SingleConfig":
+    def from_toml_dict(cls, d: dict) -> "CaseConfig":
         return cls(
-            waccm_background=_require(d, "waccm_background", "single"),
-            waccm_injection=d.get("waccm_injection") or None,
-            time_idx=int(d.get("time_idx", 0)),
-            obs_time=_require(d, "obs_time", "single"),
-            out_dir=_expand(_require(d, "out_dir", "single")),
+            name=str(_require(d, "name", "case")),
+            waccm_dir=_expand(_require(d, "waccm_dir", "case")),
+            pattern=_require(d, "pattern", "case"),
+            out_dir=_expand(_require(d, "out_dir", "case")),
+            n_workers=int(d.get("n_workers", 1)),
+            time_index=int(d.get("time_index", 0)),
+            start_date=d.get("start_date") or None,
+            end_date=d.get("end_date") or None,
+            run_l2=bool(d.get("run_l2", False)),
+            strip_ozone=bool(d.get("strip_ozone", False)),
         )
+
+    def waccm_dir_for(self, name: str) -> str:
+        """``waccm_dir`` with any ``{name}`` placeholder filled in."""
+        return self.waccm_dir.replace("{name}", name)
 
 
 @dataclass(frozen=True)
-class BatchConfig:
-    """``[batch]`` — a directory of monthly h0 files, one column per file."""
-    waccm_background_dir: str
-    waccm_injection_dir: str | None
-    h0_pattern: str
-    month_filter: list[str]
-    out_dir: str
-    n_workers: int
+class FixedConfig:
+    """``[fixed]`` — one column at a fixed tangent point and solar geometry,
+    simulated once per history file matched by ``[case]``.
+
+    ``obs_time`` sets the observation time for every file. If omitted, it is
+    taken from each file's name: ``YYYY-MM`` (monthly files) becomes the
+    15th at 12:00 UTC, ``YYYY-MM-DD[-SSSSS]`` that date and second of day.
+    """
+    tangent_lat: float
+    tangent_lon: float
+    sza_deg: float = 60.0
+    saa_deg: float = 0.0
+    obs_time: str | None = None
 
     @classmethod
-    def from_toml_dict(cls, d: dict) -> "BatchConfig":
+    def from_toml_dict(cls, d: dict) -> "FixedConfig":
         return cls(
-            waccm_background_dir=_require(d, "waccm_background_dir", "batch"),
-            waccm_injection_dir=d.get("waccm_injection_dir") or None,
-            h0_pattern=d.get("h0_pattern", "*.cam.h0.*.nc"),
-            month_filter=list(d.get("month_filter", [])),
-            out_dir=_expand(_require(d, "out_dir", "batch")),
-            n_workers=int(d.get("n_workers", 1)),
+            tangent_lat=float(_require(d, "tangent_lat", "fixed")),
+            tangent_lon=float(_require(d, "tangent_lon", "fixed")),
+            sza_deg=float(d.get("sza_deg", 60.0)),
+            saa_deg=float(d.get("saa_deg", 0.0)),
+            obs_time=d.get("obs_time") or None,
         )
 
 
 @dataclass(frozen=True)
 class OrbitConfig:
-    """``[orbit]`` — orbit-track runs (``cesm-hawc run --mode orbit-track``):
-    a real HAWC orbit-track file set matched to one CESM case's h2
-    files by day-of-year offset from ``orbit_epoch``, optionally with full
-    L2 retrieval. One case per run (``case_name``).
+    """``[orbit]`` — observations sampled along a real HAWC orbit ground
+    track and moved onto the model case's dates.
 
-    ``h2_cadence``: ``"daily"`` (default) assumes one h2 file per calendar
-    date. ``"subdaily"`` is for h2 output written more than once per day
-    (e.g. 12-hourly); one job is dispatched per h2 *file* rather than per
-    day, with each observation assigned to whichever h2 snapshot is nearest
-    to it in real elapsed time (not a fixed clock-time split), so this also
-    correctly handles an observation near midnight being closer to the next
-    day's snapshot than to the current day's own. Do not use ``"daily"``
-    with more than one h2 file per date since ``index_by_date`` silently keeps
-    only one of them.
+    The *n*-th model date (sorted) uses orbit day *n* mod *D*, where *D* is
+    the number of days the orbit set spans from ``orbit_epoch``.
+
+    ``h2_cadence``: ``"daily"`` (default) assumes one history file per
+    calendar date. ``"subdaily"`` is for output written more than once per
+    day (e.g. 12-hourly); one job is dispatched per file rather than per
+    day, and each observation is assigned to whichever snapshot is nearest
+    to it in time, including across midnight. Do not use ``"daily"`` with
+    more than one file per date: only one of them would be kept.
     """
-    out_dir: str
-    n_workers: int
     orbit_dir: str
-    waccm_data_dir: str
-    case_name: str
-
     orbit_pattern: str = "orbit_*.nc"
     orbit_epoch: str = "2019-08-01"
     center_pixel: int = 256
-    h2_pattern: str = "*.cam.h2.*.nc"
     h2_cadence: str = "daily"
     obs_cadence_s: float = 60.0
-    run_start_date: str | None = None
-    run_end_date: str | None = None
-    run_l2: bool = False
-    strip_ozone: bool = False
 
     @classmethod
     def from_toml_dict(cls, d: dict) -> "OrbitConfig":
         h2_cadence = d.get("h2_cadence", "daily")
         if h2_cadence not in ("daily", "subdaily"):
-            raise ValueError(
-                f"[orbit] h2_cadence must be 'daily' or 'subdaily', got {h2_cadence!r}"
+            raise ConfigError(
+                f"config.toml [orbit] h2_cadence must be 'daily' or 'subdaily', got {h2_cadence!r}"
             )
         return cls(
-            out_dir=_expand(_require(d, "out_dir", "orbit")),
-            n_workers=int(d.get("n_workers", 1)),
             orbit_dir=_expand(_require(d, "orbit_dir", "orbit")),
-            waccm_data_dir=_expand(_require(d, "waccm_data_dir", "orbit")),
-            case_name=_require(d, "case_name", "orbit"),
             orbit_pattern=d.get("orbit_pattern", "orbit_*.nc"),
             orbit_epoch=d.get("orbit_epoch", "2019-08-01"),
             center_pixel=int(d.get("center_pixel", 256)),
-            h2_pattern=d.get("h2_pattern", "*.cam.h2.*.nc"),
             h2_cadence=h2_cadence,
             obs_cadence_s=float(d.get("obs_cadence_s", 60.0)),
-            run_start_date=d.get("run_start_date") or None,
-            run_end_date=d.get("run_end_date") or None,
-            run_l2=bool(d.get("run_l2", False)),
-            strip_ozone=bool(d.get("strip_ozone", False)),
-        )
-
-
-@dataclass(frozen=True)
-class OrbitRealConfig:
-    """``[orbit_real]`` — per-orbit-file, per-pixel runs
-    (``cesm-hawc run --mode orbit-file``)."""
-    orbit_dir: str
-    orbit_pattern: str
-    waccm_background_dir: str
-    waccm_injection_dir: str | None
-    h2_pattern: str
-    out_dir: str
-    n_workers: int
-    across_indices: list[int]
-    time_stride: int
-
-    @classmethod
-    def from_toml_dict(cls, d: dict) -> "OrbitRealConfig":
-        return cls(
-            orbit_dir=_expand(_require(d, "orbit_dir", "orbit_real")),
-            orbit_pattern=d.get("orbit_pattern", "orbit_*.nc"),
-            waccm_background_dir=_expand(_require(d, "waccm_background_dir", "orbit_real")),
-            waccm_injection_dir=_expand(d.get("waccm_injection_dir")) or None,
-            h2_pattern=d.get("h2_pattern", "*.cam.h2.*.nc"),
-            out_dir=_expand(_require(d, "out_dir", "orbit_real")),
-            n_workers=int(d.get("n_workers", 1)),
-            across_indices=list(d.get("across_indices", [])),
-            time_stride=int(d.get("time_stride", 1)),
-        )
-
-
-@dataclass(frozen=True)
-class GeometryConfig:
-    """``[geometry]`` — fixed tangent point, shared by ``single``/``batch``."""
-    tangent_lat: float
-    tangent_lon: float
-    sza_deg: float
-    saa_deg: float
-
-    @classmethod
-    def from_toml_dict(cls, d: dict) -> "GeometryConfig":
-        return cls(
-            tangent_lat=float(_require(d, "tangent_lat", "geometry")),
-            tangent_lon=float(_require(d, "tangent_lon", "geometry")),
-            sza_deg=float(d.get("sza_deg", 60.0)),
-            saa_deg=float(d.get("saa_deg", 0.0)),
         )
 
 
@@ -219,19 +178,20 @@ class InstrumentConfig:
 
 @dataclass(frozen=True)
 class CesmHawcConfig:
-    single: SingleConfig | None
-    batch: BatchConfig | None
+    """A loaded config.toml: ``case`` is always present; ``fixed`` and
+    ``orbit`` are ``None`` when their table is absent."""
+    case: CaseConfig
+    fixed: FixedConfig | None
     orbit: OrbitConfig | None
-    orbit_real: OrbitRealConfig | None
-    geometry: GeometryConfig | None
     instrument: InstrumentConfig
 
 
 def load_config(path: str | Path) -> CesmHawcConfig:
-    """Load and validate config.toml. Each top-level table is optional
-    except ``[instrument]``; a mode that needs a missing table raises
-    ``ConfigError`` when the CLI tries to use it, not here, so a config
-    file only needs to define the tables its intended use case requires.
+    """Load and validate config.toml.
+
+    ``[case]`` is required. ``[fixed]`` and ``[orbit]`` are needed only by
+    their own mode, and ``[instrument]`` falls back to its defaults. Raises
+    ``ConfigError`` for a missing file, table or required key.
     """
     path = Path(path)
     if not path.exists():
@@ -242,11 +202,12 @@ def load_config(path: str | Path) -> CesmHawcConfig:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
+    if "case" not in raw:
+        raise ConfigError("config.toml is missing the required [case] table")
+
     return CesmHawcConfig(
-        single=SingleConfig.from_toml_dict(raw["single"]) if "single" in raw else None,
-        batch=BatchConfig.from_toml_dict(raw["batch"]) if "batch" in raw else None,
+        case=CaseConfig.from_toml_dict(raw["case"]),
+        fixed=FixedConfig.from_toml_dict(raw["fixed"]) if "fixed" in raw else None,
         orbit=OrbitConfig.from_toml_dict(raw["orbit"]) if "orbit" in raw else None,
-        orbit_real=OrbitRealConfig.from_toml_dict(raw["orbit_real"]) if "orbit_real" in raw else None,
-        geometry=GeometryConfig.from_toml_dict(raw["geometry"]) if "geometry" in raw else None,
         instrument=InstrumentConfig.from_toml_dict(raw.get("instrument", {})),
     )

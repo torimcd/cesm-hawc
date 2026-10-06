@@ -43,11 +43,12 @@ missing file or required key.
 
 ### `cesm_hawc.simulation.run_ali_simulation`
 
-`run_ali_simulation(background_file, injection_file=None, *, lat, lon, time_index, sza_deg, saa_deg, obs_time, wavelengths_nm, alt_grid_m, noise_model)`
+`run_ali_simulation(waccm_file, *, lat, lon, time_index=0, sza_deg=60.0, saa_deg=0.0, obs_time, wavelengths_nm=None, alt_grid_m=None, run_l2=False, noise_model)`
 
-Runs a background column and an optional injection column through the
-forward model and retrieval, and returns the simulator output, sulfate
-burdens and anomaly diagnostics.
+Runs one column of a history file through the forward model (and the L2
+retrieval when `run_l2=True`) at a fixed tangent point and solar geometry.
+Returns a dict with the simulator output (`data`), the truth extinction
+(`true_extinction`) and the column's sulfate burden (`burden`).
 
 ### `cesm_hawc.simulation.run_ali_simulation_from_profiles`
 
@@ -73,8 +74,7 @@ Returns the `ALINoiseModel` cesm-hawc uses everywhere. Pass it as
 ## Orbit utilities
 
 `cesm_hawc.orbit_files` reads orbit geometry: `load_orbit_files`,
-`collect_orbit_files_by_date`, `build_orbit_day_index` and
-`extract_observations`. See [Orbit files](../inputs/orbit-files.md).
+`build_orbit_day_index` and `extract_observations`. See [Orbit files](../inputs/orbit-files.md).
 
 % TODO: replace this hand-written page with generated API docs once the
 % docstrings are standardized on numpydoc.

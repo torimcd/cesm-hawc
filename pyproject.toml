@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cesm-hawc"
 version = "0.2.0"
-description = "Feed CESM2/WACCM SAI output into the HAWC ALI limb imager simulator"
+description = "Simulate HAWC ALI limb observations and retrievals from CESM2/WACCM output"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"

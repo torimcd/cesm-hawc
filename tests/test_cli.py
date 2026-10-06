@@ -5,7 +5,7 @@ import pytest
 
 import cesm_hawc.file_index as file_index_module
 import cesm_hawc.orbit_files as orbit_files_module
-from cesm_hawc.cli import _build_orbit_track_subdaily_jobs, build_parser, main
+from cesm_hawc.cli import _build_orbit_subdaily_jobs, build_parser, main
 from cesm_hawc.config import OrbitConfig
 
 
@@ -15,26 +15,55 @@ def test_build_parser_requires_mode():
         parser.parse_args(["save-inputs", "--config", "config.toml"])  # missing --mode
 
 
-def test_save_inputs_dry_run_single(tmp_path, capsys):
+def _write_case_config(tmp_path, extra: str = "") -> "Path":
+    hist = tmp_path / "my_case" / "atm" / "hist"
+    hist.mkdir(parents=True)
+    for month in ("2035-01", "2035-02", "2035-03"):
+        (hist / f"my_case.cam.h0.{month}.nc").write_bytes(b"")
     config = tmp_path / "config.toml"
     config.write_text(
-        '[single]\n'
-        'waccm_background = "/nonexistent/background.nc"\n'
-        'waccm_injection  = ""\n'
-        'time_idx = 0\n'
-        'obs_time = "2035-01-01T00:00:00Z"\n'
-        f'out_dir = "{tmp_path}"\n'
-        '\n'
-        '[geometry]\n'
+        '[case]\n'
+        'name = "my_case"\n'
+        f'waccm_dir = "{tmp_path}/{{name}}/atm/hist"\n'
+        'pattern = "*.cam.h0.*.nc"\n'
+        f'out_dir = "{tmp_path / "out"}"\n'
+        + extra +
+        '\n[fixed]\n'
         'tangent_lat = 30.6\n'
         'tangent_lon = 180.0\n'
-        '\n'
-        '[instrument]\n'
-        'wavelengths_nm = [470.0, 745.0, 1020.0]\n'
     )
-    # Should resolve config and report a job count without touching any
-    # (nonexistent) WACCM file.
-    main(["save-inputs", "--config", str(config), "--mode", "single", "--dry-run"])
+    return config
+
+
+def test_save_inputs_dry_run_fixed(tmp_path, caplog):
+    """Dry run resolves the case directory (including the {name}
+    placeholder) and counts one job per matching file, without opening any
+    of them."""
+    config = _write_case_config(tmp_path)
+    with caplog.at_level("INFO", logger="cesm_hawc"):
+        main(["save-inputs", "--config", str(config), "--mode", "fixed", "--dry-run"])
+    assert "would save inputs for 3 files" in caplog.text
+
+
+def test_save_inputs_dry_run_fixed_date_range(tmp_path, caplog):
+    config = _write_case_config(tmp_path, 'start_date = "2035-02-10"\nend_date = "2035-03-31"\n')
+    with caplog.at_level("INFO", logger="cesm_hawc"):
+        main(["save-inputs", "--config", str(config), "--mode", "fixed", "--dry-run"])
+    assert "would save inputs for 2 files" in caplog.text
+
+
+def test_save_inputs_missing_mode_table_exits(tmp_path):
+    config = _write_case_config(tmp_path)
+    with pytest.raises(SystemExit, match=r"\[orbit\]"):
+        main(["save-inputs", "--config", str(config), "--mode", "orbit", "--dry-run"])
+
+
+def test_strip_ozone_is_run_only():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["save-inputs", "--mode", "fixed", "--strip-ozone"])
+    args = parser.parse_args(["run", "--mode", "fixed", "--strip-ozone"])
+    assert args.strip_ozone
 
 
 def test_require_sim_deps_exits_with_install_instructions(monkeypatch):
@@ -55,7 +84,7 @@ def test_require_sim_deps_exits_with_install_instructions(monkeypatch):
     assert "cesm-hawc[sim]" in str(exc_info.value)
 
 
-def test_build_orbit_track_subdaily_jobs_nearest_snapshot(tmp_path, monkeypatch):
+def test_build_orbit_subdaily_jobs_nearest_snapshot(tmp_path, monkeypatch):
     """Verifies the core correctness claim of h2_cadence='subdaily': every
     observation is assigned to whichever h2 snapshot is nearest to it in
     real elapsed time, including across a calendar-date boundary (an
@@ -90,16 +119,12 @@ def test_build_orbit_track_subdaily_jobs_nearest_snapshot(tmp_path, monkeypatch)
     monkeypatch.setattr(orbit_files_module, "extract_observations", fake_extract_observations)
     monkeypatch.setattr(file_index_module, "index_by_timestamp", lambda *a, **k: dict(snapshots))
 
-    o = OrbitConfig(
-        out_dir=str(tmp_path), n_workers=1, orbit_dir="/fake", waccm_data_dir="/fake",
-        case_name="test_case", h2_cadence="subdaily", obs_cadence_s=720,
-    )
+    o = OrbitConfig(orbit_dir="/fake", h2_cadence="subdaily", obs_cadence_s=720)
 
     # extract_observations is called once per case date; case dates come from
     # the mocked snapshots' own dates, so both 2030-01-07 and 2030-01-08 get
     # their +1h/+11h/+23h observations generated above.
-    jobs = _build_orbit_track_subdaily_jobs(o, str(tmp_path), alt_grid_m=None, run_l2=False,
-                                             case_name="test_case")
+    jobs = _build_orbit_subdaily_jobs(o, "/fake", "*.cam.h2.*.nc", None, None, str(tmp_path))
 
     by_label = {label: obs for label, obs, *_ in jobs}
     assert set(by_label.keys()) == {

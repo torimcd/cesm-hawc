@@ -130,7 +130,7 @@ seeded, so repeated runs draw different noise.
 
 ## Orbit sampling
 
-In `orbit-track` mode, observations come from real orbit files but are
+In `orbit` mode, observations come from real orbit files but are
 placed on the simulated model dates:
 
 1. The case's h2 dates are sorted, and the *n*-th date uses orbit day
@@ -148,8 +148,8 @@ placed on the simulated model dates:
 ## Sulfate burden
 
 `WACCMAtmosphere.sulfate_column_burden` integrates the sulfate mass of both
-modes between 15 and 35 km, giving the burden in mg m⁻². Run summaries
-report it for the background and injection columns, and their difference.
+modes between 15 and 35 km, giving the burden in mg m⁻². `fixed` mode
+reports it in each file's `summary.txt`.
 
 ## References
 

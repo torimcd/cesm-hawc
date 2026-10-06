@@ -11,16 +11,8 @@ ALT_GRID_M = np.arange(0.0, 65001.0, 1000.0)
 
 
 @pytest.fixture
-def example_background_column_path() -> Path:
-    path = EXAMPLE_FIXTURE_DIR / "example_column_background.nc"
-    if not path.exists():
-        pytest.skip("bundled example fixture not found")
-    return path
-
-
-@pytest.fixture
-def example_injection_column_path() -> Path:
-    path = EXAMPLE_FIXTURE_DIR / "example_column_injection.nc"
+def example_column_path() -> Path:
+    path = EXAMPLE_FIXTURE_DIR / "example_column.nc"
     if not path.exists():
         pytest.skip("bundled example fixture not found")
     return path

@@ -1,4 +1,4 @@
-"""cesm_hawc: feed CESM2/WACCM SAI output into the HAWC ALI simulator."""
+"""cesm_hawc: simulate HAWC ALI observations and retrievals from CESM2/WACCM output."""
 
 from cesm_hawc.env import configure_environment
 

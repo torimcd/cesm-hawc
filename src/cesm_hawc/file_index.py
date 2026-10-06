@@ -13,7 +13,7 @@ import re
 
 import pandas as pd
 
-_MONTH_RE = re.compile(r"\d{4}-\d{2}(?!-)")
+_FILE_DATE_RE = re.compile(r"(\d{4}-\d{2})(?:-(\d{2}))?(?:-(\d{5}))?\.nc$")
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})-\d+\.nc$")
 _DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})-(\d+)\.nc$")
 
@@ -25,22 +25,47 @@ def _glob_sorted(directory: str, pattern: str) -> list[str]:
     return paths
 
 
-def index_by_month(directory: str, pattern: str,
-                    month_filter: list[str] | None = None) -> dict[str, str]:
-    """Return ``{"YYYY-MM": filepath}`` for monthly (h0) files in a directory.
+def list_files(directory: str, pattern: str) -> list[str]:
+    """Return the sorted paths in ``directory`` matching ``pattern``.
+    Raises ``FileNotFoundError`` if there are none."""
+    return _glob_sorted(directory, pattern)
 
-    If ``month_filter`` is given and non-empty, only those months are kept.
-    """
-    result: dict[str, str] = {}
-    for p in _glob_sorted(directory, pattern):
-        m = _MONTH_RE.search(os.path.basename(p))
-        if m is None:
-            continue
-        date = m.group(0)
-        if month_filter and date not in month_filter:
-            continue
-        result[date] = p
-    return result
+
+def filename_date(path: str) -> str | None:
+    """Return the date in a CAM history file name, as ``"YYYY-MM"``
+    (``*.YYYY-MM.nc``, e.g. monthly h0) or ``"YYYY-MM-DD"``
+    (``*.YYYY-MM-DD-SSSSS.nc``), or ``None`` if the name has no date."""
+    m = _FILE_DATE_RE.search(os.path.basename(path))
+    if m is None:
+        return None
+    return f"{m.group(1)}-{m.group(2)}" if m.group(2) else m.group(1)
+
+
+def filename_time(path: str) -> pd.Timestamp | None:
+    """Return a representative time for a CAM history file from its name:
+    the 15th at 12:00 for ``YYYY-MM``, otherwise the date plus the
+    ``SSSSS`` seconds of day (0 if absent). ``None`` if the name has no
+    date."""
+    m = _FILE_DATE_RE.search(os.path.basename(path))
+    if m is None:
+        return None
+    if m.group(2) is None:
+        return pd.Timestamp(f"{m.group(1)}-15T12:00:00")
+    seconds = int(m.group(3)) if m.group(3) else 0
+    return pd.Timestamp(f"{m.group(1)}-{m.group(2)}") + pd.Timedelta(seconds=seconds)
+
+
+def date_in_range(date: str, start: str | None, end: str | None) -> bool:
+    """True if ``date`` (``"YYYY-MM"`` or ``"YYYY-MM-DD"``) falls within
+    ``[start, end]`` (``"YYYY-MM-DD"``, either may be ``None``). Bounds are
+    compared at ``date``'s own precision, so a month is kept if any part of
+    it is in range."""
+    n = len(date)
+    if start and date < start[:n]:
+        return False
+    if end and date > end[:n]:
+        return False
+    return True
 
 
 def index_by_date(directory: str, pattern: str) -> dict[str, str]:

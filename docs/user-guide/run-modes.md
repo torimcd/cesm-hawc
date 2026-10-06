@@ -1,91 +1,80 @@
 # Run modes
 
-The `cesm-hawc` command has two subcommands, each with the same four modes:
+The `cesm-hawc` command has two subcommands, each with two modes:
 
 ```bash
-cesm-hawc save-inputs --config config.toml --mode {single,batch,orbit-track,orbit-file}
-cesm-hawc run         --config config.toml --mode {single,batch,orbit-track,orbit-file}
+cesm-hawc save-inputs --config config.toml --mode {fixed,orbit}
+cesm-hawc run         --config config.toml --mode {fixed,orbit}
 ```
 
 - **`save-inputs`** extracts WACCM columns and saves them as simulator-ready
   NetCDF files. It needs only the base install.
-- **`run`** runs the forward model and, depending on the mode, the L2
+- **`run`** runs the ALI forward model and, if `run_l2 = true`, the L2
   retrieval. It needs the `[sim]` extra.
+
+Each run processes **one model case**: the history files that `[case]`
+points to. Output goes under `out_dir/<case name>/`. To process several
+cases, run once per case. `--case-name` lets one config serve them all (see
+[Configuration](configuration.md#case)).
 
 ## Choosing a mode
 
-| Mode | Samples | WACCM files | Config tables |
-|------|---------|-------------|---------------|
-| `single` | One column at a fixed location | One file (any stream) | `[single]`, `[geometry]` |
-| `batch` | One fixed column per monthly file | A directory of h0 files | `[batch]`, `[geometry]` |
-| `orbit-track` | Many columns along a real orbit ground track, one CESM case per run | Daily (or sub-daily) h2 files | `[orbit]` |
-| `orbit-file` | Every chosen pixel of every orbit file | Daily h2 files, background and optional injection | `[orbit_real]` |
+| Mode | Samples | One job per | Config table |
+|------|---------|-------------|--------------|
+| `fixed` | One column at a fixed tangent point and solar geometry | History file | `[fixed]` |
+| `orbit` | Many columns along a real HAWC orbit ground track | Day (or history file, if sub-daily) | `[orbit]` |
 
-All modes also read `[instrument]` for wavelengths and the altitude grid.
+Both modes also read `[case]` and `[instrument]`.
 
-### single
+### fixed
 
-Runs one background column, and optionally the matching injection column,
-at the fixed tangent point and solar angles in `[geometry]`. With an
-injection file, it also reports the peak extinction and radius anomalies
-above 15 km and the change in 15–35 km sulfate burden.
+For every history file matched by `[case]`, simulates the column at
+`tangent_lat`, `tangent_lon` with the given solar zenith and azimuth angles.
+It works with any output stream, for example monthly h0 files for a
+seasonal cycle at one location, or a single file for a quick look.
 
-### batch
+The observation time is `obs_time` if set, otherwise it comes from each file
+name: `YYYY-MM` files use the 15th at 12:00 UTC, and `YYYY-MM-DD-SSSSS`
+files use that date and time of day.
 
-Runs the `single` calculation once per month for a directory of h0 files.
-Months are matched between the background and injection directories by the
-`YYYY-MM` in the file name. The observation time is set to the 15th of each
-month at 12:00 UTC.
+### orbit
 
-### orbit-track
+Replays a real HAWC orbit ground track over the case's daily (or sub-daily)
+output. For each model date it takes one orbit day's files, samples an
+observation at `center_pixel` every `obs_cadence_s` seconds, and moves each
+observation onto the model date while keeping its real time of day and
+satellite geometry. Solar angles are computed from that time and position,
+and night-side observations are skipped.
 
-Replays a real HAWC orbit ground track over one CESM case's h2 output. For
-each simulated date it takes one orbit day's files, samples observations at
-the `center_pixel` every `obs_cadence_s` seconds, and moves each
-observation's time onto the simulated date while keeping its real time of
-day and satellite geometry. Solar angles are then computed from that time
-and position. Night-side observations are skipped.
-
-Simulated dates are paired with orbit days by position: the *n*-th h2 date
-in the case (sorted) uses orbit day *n* modulo the number of orbit days. See
+Model dates are paired with orbit days by position: the *n*-th date (sorted)
+uses orbit day *n* modulo the number of orbit days. See
 [Methods](../background/methods.md#orbit-sampling) for details.
 
-Run this mode once per CESM case; `--case-name` overrides `case_name` so one
-config can drive several cases. With `run_l2 = true` it also runs the L2
-retrieval for every observation, which is slow (minutes per profile).
+Set `h2_cadence = "subdaily"` if your history files are written more than
+once per day. Each observation is then assigned to the nearest snapshot in
+time instead of to its calendar date's file.
 
-Set `h2_cadence = "subdaily"` if your h2 files are written more than once per
-day. Each observation is then assigned to the nearest h2 snapshot in time
-instead of to its calendar date's file.
+## Command-line options
 
-### orbit-file
-
-Runs the forward model and L2 retrieval for each selected across-track pixel
-(`across_indices`) at every `time_stride`-th time step of each orbit file,
-using the h2 file for that orbit file's calendar date. Unlike `orbit-track`,
-dates are not remapped: orbit files and h2 files are matched by actual date.
-
-## Common flags
-
-| Flag | Effect |
-|------|--------|
+| Option | Effect |
+|--------|--------|
 | `--config PATH` | Config file to read (default `config.toml`) |
-| `--mode MODE` | One of the four modes above (required) |
-| `--out-dir PATH` | Override the mode's `out_dir` |
-| `--n-workers N` | Override the mode's `n_workers` |
-| `--case-name NAME` | Override `[orbit] case_name` (`orbit-track` only) |
-| `--strip-ozone` | Zero WACCM ozone before simulating; writes to `<case_name>_no_ozone/` (`run --mode orbit-track` only) |
-| `--profiles-only` | Save only the raw WACCM profiles, skipping constituents (`save-inputs` only) |
+| `--mode MODE` | `fixed` or `orbit` (required) |
+| `--case-name NAME` | Override `[case] name`, which also fills `{name}` in `waccm_dir` |
+| `--out-dir PATH` | Override `[case] out_dir` |
+| `--n-workers N` | Override `[case] n_workers` |
 | `--dry-run` | Report how many jobs would run, then stop |
-| `-v`, `--verbose` | Debug-level logging |
+| `--profiles-only` | `save-inputs` only: save the raw WACCM profiles, skipping constituents |
+| `--strip-ozone` | `run` only: zero WACCM ozone before simulating; writes to `<case name>_no_ozone/` |
+| `-v`, `--verbose` | Debug-level logging (before the subcommand: `cesm-hawc -v run …`) |
 
 ## Parallelism and resuming
 
-`batch`, `orbit-track` and `orbit-file` split work into jobs (a month, a day
-or an orbit file) and run them across `n_workers` processes; `n_workers = 1`
-runs serially, which is easiest to debug.
+Jobs run across `n_workers` processes; `n_workers = 1` runs serially, which is
+easiest to debug.
 
-`run --mode orbit-track` is resumable. A day whose outputs already exist is
-skipped, and with `run_l2 = true` each finished profile is recorded in
-`l2_diagnostics.csv` as it completes, so a killed job picks up where it
-stopped. Re-submit the same command to continue.
+`run` is resumable in both modes. A job whose outputs already exist is
+skipped, so re-submitting the same command continues where a killed run
+stopped. In `orbit` mode with `run_l2 = true`, each finished profile within a
+day is also recorded in `l2_diagnostics.csv` as it completes, so a partly
+finished day resumes too.

@@ -29,9 +29,9 @@ fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a3', 'num_a1', 'num_a3'
 
 | Mode | Suffix | σ_g | Description |
 |------|--------|-----|-------------|
-| Accumulation | `_a1` | 1.6 | Fresh SO₂ injection signal |
+| Accumulation | `_a1` | 1.6 | Accumulation-mode sulfate |
 | Aitken | `_a2` | 1.6 | Minor contribution (not used) |
-| **Coarse** | **`_a3`** | **1.2** | **Aged sulfate — dominates ALI signal after ~2 weeks** |
+| Coarse | `_a3` | 1.2 | Coarse-mode sulfate |
 
 > **Note:** σ_g = 1.6 for the accumulation mode and σ_g = 1.2 for the coarse
 > mode are both WACCM-specific for stratospheric sulfate (Mills et al. 2016).

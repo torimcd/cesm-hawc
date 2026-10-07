@@ -84,8 +84,5 @@ print(result["burden"]["burden_mg_m2"])               # mg SO₄ m⁻², 15–35
 
 `noise_model` is required: the ALI imager model has no noiseless mode.
 
-## A fuller worked example
-
-`examples/quickstart.py` in the repository runs one CESM h2 file against a
-real orbit file, saves every intermediate product, and compares the
-retrieval against the model truth.
+For every step on one example column, with plots, see the
+[Tutorial](tutorial.ipynb).

@@ -30,16 +30,13 @@ All notable changes to cesm-hawc are listed here. The format follows
 - The `orbit-file` mode and `[orbit_real]` table.
 - Background/injection pairing and anomaly diagnostics. Compare cases in
   your own analysis code instead.
+- `examples/quickstart.py`. The [Tutorial](../tutorial.ipynb) walks through
+  one column, and `cesm-hawc run --mode orbit` covers orbit geometry.
 
 ### Added
 
 - This documentation site.
 - `default_noise_model(seed=...)` for reproducible instrument noise.
-
-### Fixed
-
-- `examples/quickstart.py` uses the `ideal_dolp_imager` instrument model and
-  passes a noise model, matching the CLI.
 
 % TODO: add entries for 0.2.0 and earlier, including the longitude fix in
 % WACCMAtmosphere.get_column_profiles. Before that fix, requested longitudes

@@ -68,7 +68,6 @@ reference and builds the book on every pull request and push. Pushes to
 |------|----------|
 | `src/cesm_hawc/` | The package |
 | `tests/` | Unit tests |
-| `examples/` | Worked examples |
 | `scripts/` | HPC environment setup and the SLURM job script |
 | `docs/` | This documentation |
 | `config.example.toml` | Template configuration |

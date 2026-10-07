@@ -49,6 +49,7 @@ import cesm_hawc
 from cesm_hawc.calibration import warm_calibration_database
 from cesm_hawc.constituents import warm_mode_databases
 from cesm_hawc.convergence import extract_l2_native_diagnostics, parse_scipy_convergence
+from cesm_hawc.noise import default_noise_model
 from cesm_hawc.orbit_files import extract_observations, l1b_image_to_dataset
 from cesm_hawc.outputs import write_text_summary
 from cesm_hawc.save_inputs import save_column_inputs
@@ -60,6 +61,9 @@ CENTER_PIXEL = 256                         # cross-track index used as tangent p
 WAVELENGTHS_NM = np.array([470.0, 745.0, 1020.0])
 ALT_GRID_M = np.arange(0.0, 65001.0, 1000.0)
 REFERENCE_WAVELENGTH_NM = 745.0            # matches ExtinctionScatterer's reference
+# Both retrievals below use this noise seed, so they see identical instrument
+# noise and their difference shows only how well the saved file round-trips.
+NOISE_SEED = 0
 
 
 def h2_filename_date(h2_path: str) -> pd.Timestamp:
@@ -107,8 +111,9 @@ def find_daytime_observation(waccm, simulator, orbit_path, sim_date, obs_index):
             with contextlib.redirect_stdout(captured):
                 data, true_ext = run_ali_simulation_from_profiles(
                     profiles, ALT_GRID_M, sim_geometry, simulator=simulator,
-                    products=DEFAULT_PRODUCTS, return_extinction=True,
-                    truth_wavelengths_nm=WAVELENGTHS_NM,
+                    products=DEFAULT_PRODUCTS,
+                    noise_model=default_noise_model(seed=NOISE_SEED),
+                    return_extinction=True, truth_wavelengths_nm=WAVELENGTHS_NM,
                 )
             return cand, data, true_ext, captured.getvalue()
         except ValueError as e:
@@ -130,16 +135,16 @@ def find_daytime_observation(waccm, simulator, orbit_path, sim_date, obs_index):
 
 
 def run_simulator_direct(constituents_path: str, sim_geometry: dict):
-    """
-    Re-read the just-saved constituents-input file and rebuild the
-    simulator's aerosol/gas constituents using only native sasktran2 calls. Then run
-    the simulator with the exact same ``sim_geometry`` the cesm-hawc-native
-    run used. Mirrors the README's "Consuming saved inputs externally"
-    example.
-    
+    """Run the simulator from the saved constituents-input file alone.
+
+    Rebuilds the aerosol and gas constituents with native ``sasktran2``
+    calls, then runs the simulator with the same ``sim_geometry`` and noise
+    settings as the cesm-hawc run. Mirrors the example on the
+    documentation's "Using saved inputs" page.
     """
     import sasktran2 as sk
-    from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+    from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
+    from hawcsimulator.noise import ALINoiseModel
 
     ds = xr.open_dataset(constituents_path)
     assert ds.attrs["includes_constituents"], f"{constituents_path} was saved with --profiles-only"
@@ -167,8 +172,11 @@ def run_simulator_direct(constituents_path: str, sim_geometry: dict):
         "aerosol_coarse": mode_constituent("aerosol_coarse"),
     }
 
+    # Same instrument model and noise settings as cesm-hawc (see cesm_hawc.noise).
+    noise_model = ALINoiseModel(straylight_fraction=0.0, seed=NOISE_SEED)
     data = IdealALISimulator().run(
-        ["l2", "front_end_radiance", "l1b"], {**sim_geometry, "constituents": constituents}
+        ["l2", "front_end_radiance", "l1b"],
+        {**sim_geometry, "constituents": constituents, "l1b_cfg": {"noise_model": noise_model}},
     )
     return data["l2"]
 
@@ -236,7 +244,7 @@ def main(h2_path: str, orbit_path: str, out_dir: str,
          obs_index: int | None, date_override: str | None) -> None:
     cesm_hawc.configure_environment()
 
-    from hawcsimulator.ali.configurations.ideal_spectrograph import IdealALISimulator
+    from hawcsimulator.ali.configurations.ideal_dolp_imager import IdealALISimulator
 
     sim_date = pd.Timestamp(date_override) if date_override else h2_filename_date(h2_path)
     os.makedirs(out_dir, exist_ok=True)

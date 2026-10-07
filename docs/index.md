@@ -40,6 +40,7 @@ flowchart TB
 ## Where to go next
 
 - New users: [Installation](installation.md), then the [Quickstart](quickstart.md).
+- See every step on one example column: the [Tutorial](tutorial.ipynb).
 - Preparing a CESM run: [WACCM output variables](waccm_variables.md).
 - Choosing how to sample the model: [Run modes](user-guide/run-modes.md).
 - How the conversion works: [Methods](background/methods.md).

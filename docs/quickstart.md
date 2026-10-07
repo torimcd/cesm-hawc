@@ -89,6 +89,3 @@ print(result["burden"]["burden_mg_m2"])               # mg SO₄ m⁻², 15–35
 `examples/quickstart.py` in the repository runs one CESM h2 file against a
 real orbit file, saves every intermediate product, and compares the
 retrieval against the model truth.
-
-% TODO: update once examples/quickstart.py is switched to ideal_dolp_imager
-% and passes a noise model.

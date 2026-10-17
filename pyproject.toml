@@ -1,14 +1,29 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cesm-hawc"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Simulate HAWC ALI limb observations and retrievals from CESM2/WACCM output"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Victoria McDonald" }]
 requires-python = ">=3.11"
+keywords = ["CESM", "WACCM", "stratospheric aerosol", "limb scattering", "HAWC", "ALI", "remote sensing"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
 dependencies = [
     "numpy",
     "xarray",
@@ -18,12 +33,18 @@ dependencies = [
     "dask",
 ]
 
+[project.urls]
+Documentation = "https://torimcd.github.io/cesm-hawc/"
+Source = "https://github.com/torimcd/cesm-hawc"
+Issues = "https://github.com/torimcd/cesm-hawc/issues"
+Changelog = "https://torimcd.github.io/cesm-hawc/changelog"
+
 [project.scripts]
 cesm-hawc = "cesm_hawc.cli:main"
 
 [project.optional-dependencies]
 # End-to-end simulation (the `cesm-hawc run` CLI command / cesm_hawc.simulation
-# / cesm_hawc.constituents). 
+# / cesm_hawc.constituents).
 sim = [
     "aliprocessing>=2026.10.0",
     "hawcsimulator>=2026.6.0",
@@ -31,6 +52,9 @@ sim = [
 ]
 dev = ["pytest", "jupyter", "matplotlib", "cartopy"]
 docs = ["jupyter-book>=2"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cesm_hawc.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

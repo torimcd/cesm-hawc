@@ -3,7 +3,9 @@
 All notable changes to cesm-hawc are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 1.0.0 — unreleased
+
+First public release. Changes since 0.2.0:
 
 ### Changed
 
@@ -39,8 +41,12 @@ All notable changes to cesm-hawc are listed here. The format follows
 
 - This documentation site.
 - `default_noise_model(seed=...)` for reproducible instrument noise.
+- A step-by-step tutorial notebook.
+- Package metadata for PyPI: authors, links and classifiers.
 
-% TODO: add entries for 0.2.0 and earlier, including the longitude fix in
-% WACCMAtmosphere.get_column_profiles. Before that fix, requested longitudes
-% in -180..180 that were negative all selected the lon = 0 column, which
-% affects results from any earlier version.
+### Fixed
+
+- The base install now depends on `netCDF4` and `dask`, which are needed to
+  open history files.
+- The calibration-cache workaround now finds `hawcsimulator`'s cache on macOS
+  and Windows as well as Linux.

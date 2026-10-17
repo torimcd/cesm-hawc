@@ -4,10 +4,13 @@ Feed CESM2/WACCM atmosphere model output into the
 [HAWC ALI simulator](https://github.com/usask-arg/hawc-simulator) to
 simulate what the HAWCSat Aerosol Limb Imager would observe.
 
+**Documentation:** <https://torimcd.github.io/cesm-hawc/>, including a step-by-step
+[tutorial](https://torimcd.github.io/cesm-hawc/tutorial) on an example column.
+
 ## What this does
 
-Given CESM/WACCM history output (monthly `h0` or daily `h2` files), this
-package:
+Given CESM/WACCM history output (any stream, e.g. monthly `h0` or daily
+`h2` files), this package:
 
 1. Extracts one or many atmospheric columns (T, P, O₃, MAM4 sulfate aerosol)
 2. Converts MAM4 modal aerosol to extinction profiles using mode-matched Mie databases
@@ -108,7 +111,7 @@ When `sasktran2` is installed, each file written by `save-inputs` contains
 everything needed to rebuild the simulator's aerosol and gas constituents
 with native `sasktran2` calls: per-mode reference and truth extinction,
 clipped median radius, and the Mie database build parameters as attributes.
-The documentation's "Using saved inputs" page has a complete example.
+See [Using saved inputs](https://torimcd.github.io/cesm-hawc/saved-inputs) for a complete example.
 
 ## Required WACCM output variables
 
@@ -116,12 +119,13 @@ Add these to `fincl` in `user_nl_cam` if not already present:
 
 | Variable | Description |
 |----------|-------------|
-| `T`, `Q`, `PS` | Temperature, humidity, surface pressure |
-| `O3`, `NO2`, `SO2` | Gas chemistry (mol/mol) |
+| `T`, `Q`, `PS` | Temperature, humidity, surface pressure (required) |
+| `hyam`, `hybm`, `P0` | Hybrid level coefficients and reference pressure (`hyam`, `hybm` required) |
+| `O3`, `NO2`, `SO2`, `H2O` | Gas chemistry (mol/mol) |
 | `so4_a1`, `so4_a3` | Sulfate mass mixing ratio (kg/kg) |
 | `num_a1`, `num_a3` | Aerosol number mixing ratio (#/kg) |
 
-See [docs/waccm_variables.md](docs/waccm_variables.md) for the full list.
+See [WACCM output variables](https://torimcd.github.io/cesm-hawc/waccm-variables) for details.
 
 ## Testing
 

@@ -40,7 +40,8 @@ files use that date and time of day.
 ### orbit
 
 Replays a real HAWC orbit ground track over the case's daily (or sub-daily)
-output. For each model date it takes one orbit day's files, samples an
+output. It needs a set of HAWC orbit files, which are available on request
+(see [Orbit files](../inputs/orbit-files.md)). For each model date it takes one orbit day's files, samples an
 observation at `center_pixel` every `obs_cadence_s` seconds, and moves each
 observation onto the model date while keeping its real time of day and
 satellite geometry. Solar angles are computed from that time and position,

@@ -5,8 +5,11 @@ set of HAWC orbit NetCDF files: one file per orbit (roughly one revolution),
 giving the satellite position and the tangent-point locations of the ALI
 image over time.
 
-% TODO: say where users can obtain orbit files, who produces them, and under
-% what terms; or ship a small sample file with the package.
+```{note}
+HAWC orbit files are not yet publicly distributed. They are available on
+request: open an issue on [GitHub](https://github.com/torimcd/cesm-hawc/issues)
+or contact the author.
+```
 
 ## Required contents
 

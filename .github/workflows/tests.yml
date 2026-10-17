@@ -1,0 +1,65 @@
+# Run the base-tier tests and check the package builds and installs.
+# Tests that need the [sim] extra (sasktran2, hawcsimulator) skip themselves
+# here; run them locally in the conda environment from environment.yml.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e . pytest
+
+      - name: Test
+        run: pytest
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+
+      # Install the built wheel into a clean environment, so missing
+      # dependencies or package data show up here rather than for users.
+      - name: Install and run the wheel
+        run: |
+          python -m venv /tmp/wheel-env
+          /tmp/wheel-env/bin/pip install dist/*.whl
+          /tmp/wheel-env/bin/cesm-hawc --help
+          /tmp/wheel-env/bin/python -c "import cesm_hawc; print(cesm_hawc.__version__)"

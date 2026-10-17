@@ -18,9 +18,16 @@ _patched = False
 
 
 def _cache_file_path(name: str, version: str) -> str:
-    """Path of ``hawcsimulator``'s cached calibration file for ``(name, version)``."""
-    cache_dir = os.path.expanduser("~/.local/share/hawc-simulator/ali/calibration")
-    return os.path.join(cache_dir, f"{name}_{version}.nc")
+    """Path of ``hawcsimulator``'s cached calibration file for ``(name, version)``.
+
+    Built the same way as ``hawcsimulator.ali.calibration``, from the
+    platform's user data directory (e.g. ``~/.local/share`` on Linux,
+    ``~/Library/Application Support`` on macOS).
+    """
+    import appdirs  # a hawcsimulator dependency
+
+    data_dir = appdirs.AppDirs(appname="hawc-simulator", appauthor="usask-arg").user_data_dir
+    return os.path.join(data_dir, "ali", "calibration", f"{name}_{version}.nc")
 
 
 def patch_calibration_database_race() -> None:

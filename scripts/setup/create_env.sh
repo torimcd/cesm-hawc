@@ -30,12 +30,15 @@ micromamba create -n hawc_env -c conda-forge \
     cartopy \
     numba \
     dask \
+    scikit-learn \
     -y
 
 micromamba activate hawc_env
 
 echo "=== Installing cesm-hawc (editable, with the [sim] extra) ==="
-pip install -e "$REPO_DIR[sim]"
+# hawcsimulator 2026.10 requires sasktran2 2026.10.1, which conda-forge doesn't
+# have yet; keep the conda-forge sasktran2 rather than a pip wheel.
+pip install -e "$REPO_DIR[sim]" "hawcsimulator>=2026.6.0,<2026.10"
 
 echo ""
 echo "Testing imports..."

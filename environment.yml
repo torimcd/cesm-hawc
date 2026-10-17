@@ -12,9 +12,13 @@ dependencies:
   - cartopy
   - numba
   - dask
+  # Installed from conda-forge so every compiled package shares conda's
+  # OpenMP runtime; pip wheels of these bundle their own copy.
+  - scikit-learn
   - pip
   - pip:
-    # Pinned to a commit past the aerosol_median_radius_db() 1500nm wavelength
-    # cutoff fix.
-    - aliprocessing @ git+https://github.com/usask-arg/ali-processing.git@a451f0d73d4ca0404559adb654fa52861287a089
-    - hawcsimulator  # pure Python, safe to install from PyPI
+    - aliprocessing>=2026.10.0
+    # hawcsimulator 2026.10 requires sasktran2 2026.10.1, which conda-forge
+    # doesn't have yet; pip would replace conda's sasktran2 with a wheel.
+    # Remove the upper bound once conda-forge has sasktran2 >= 2026.10.1.
+    - hawcsimulator>=2026.6.0,<2026.10

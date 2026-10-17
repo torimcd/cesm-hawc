@@ -9,9 +9,6 @@ pip install cesm-hawc          # base tier: column extraction and save-inputs
 pip install cesm-hawc[sim]     # + forward model and L2 retrieval
 ```
 
-% TODO: the [sim] extra currently pins aliprocessing to a git commit, which
-% PyPI does not accept. Update this page once that dependency is resolved.
-
 ## From source
 
 ```bash
@@ -23,8 +20,7 @@ pip install -e ".[sim,dev]"
 ```
 
 `environment.yml` installs `sasktran2` and the scientific stack from
-conda-forge, plus `hawcsimulator` and the pinned `aliprocessing` commit
-from pip.
+conda-forge, plus `hawcsimulator` and `aliprocessing` from PyPI.
 
 ## Checking the install
 

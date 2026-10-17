@@ -8,6 +8,8 @@ All notable changes to cesm-hawc are listed here. The format follows
 ### Changed
 
 - Python 3.11 or later is now required for both install tiers.
+- The `[sim]` extra now installs `aliprocessing` 2026.10.0 or later from PyPI,
+  instead of from a pinned git commit.
 - **Breaking:** the run modes are now `fixed` and `orbit`, and every run
   processes one model case. The config file has a required `[case]` table
   (`name`, `waccm_dir`, `pattern`, `out_dir`, ...), plus `[fixed]` and

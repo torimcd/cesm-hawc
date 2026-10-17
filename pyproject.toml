@@ -14,6 +14,8 @@ dependencies = [
     "xarray",
     "scipy",
     "pandas",
+    "netCDF4",
+    "dask",
 ]
 
 [project.scripts]

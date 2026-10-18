@@ -13,6 +13,8 @@ FORWARD_PRODUCTS : tuple of str
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pandas as pd
 
@@ -44,6 +46,51 @@ def products_for(run_l2: bool) -> tuple:
         :data:`DEFAULT_PRODUCTS` if ``run_l2``, else :data:`FORWARD_PRODUCTS`.
     """
     return DEFAULT_PRODUCTS if run_l2 else FORWARD_PRODUCTS
+
+
+@functools.lru_cache(maxsize=1)
+def retrieval_wavelength_range() -> tuple[float, float]:
+    """Return the wavelength range the L2 retrieval's aerosol model covers.
+
+    Read from ``aliprocessing``'s retrieval Mie database
+    (``aerosol_median_radius_db``), building it on first use.
+
+    Returns
+    -------
+    tuple of float
+        Shortest and longest wavelength in the database [nm].
+    """
+    from aliprocessing.l2.optical import aerosol_median_radius_db
+
+    wavelengths = aerosol_median_radius_db()._database["wavelength_nm"].to_numpy()
+    return float(wavelengths.min()), float(wavelengths.max())
+
+
+def check_retrieval_wavelengths(wavelengths_nm) -> None:
+    """Check that wavelengths are within the L2 retrieval's range.
+
+    Outside :func:`retrieval_wavelength_range`, the retrieval has no aerosol
+    optical properties, so it would fit radiances it cannot model.
+
+    Parameters
+    ----------
+    wavelengths_nm : array-like
+        Simulated wavelengths [nm].
+
+    Raises
+    ------
+    ValueError
+        If any wavelength is outside the retrieval's range.
+    """
+    low, high = retrieval_wavelength_range()
+    wavelengths = np.atleast_1d(np.asarray(wavelengths_nm, dtype=float))
+    outside = wavelengths[(wavelengths < low) | (wavelengths > high)]
+    if outside.size:
+        raise ValueError(
+            f"Wavelengths {outside.tolist()} nm are outside the L2 retrieval's range "
+            f"({low:g}–{high:g} nm). Remove them from wavelengths_nm, or run without "
+            "the retrieval (run_l2 = false)."
+        )
 
 
 def run_ali_simulation_from_profiles(
@@ -100,14 +147,18 @@ def run_ali_simulation_from_profiles(
     Raises
     ------
     ValueError
-        If ``noise_model`` is None. The ``ideal_dolp_imager`` instrument
-        model has no noiseless mode.
+        If ``noise_model`` is None (the ``ideal_dolp_imager`` instrument
+        model has no noiseless mode), or if ``products`` includes ``"l2"``
+        and a wavelength is outside the retrieval's range (see
+        :func:`check_retrieval_wavelengths`).
     """
     if noise_model is None:
         raise ValueError(
             "noise_model is required -- IdealALISimulator (ideal_dolp_imager) "
             "has no noiseless fallback. Pass cesm_hawc.noise.default_noise_model()."
         )
+    if "l2" in products:
+        check_retrieval_wavelengths(sim_geometry["sample_wavelengths"])
     if simulator is None:
         simulator = IdealALISimulator()
 
@@ -178,7 +229,9 @@ def run_ali_simulation(
     Raises
     ------
     ValueError
-        If ``noise_model`` is None.
+        If ``noise_model`` is None, or if ``run_l2`` is True and a
+        wavelength is outside the retrieval's range (see
+        :func:`check_retrieval_wavelengths`).
 
     Examples
     --------

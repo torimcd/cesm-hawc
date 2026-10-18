@@ -43,6 +43,9 @@ First public release. Changes since 0.2.0:
 - A step-by-step tutorial notebook.
 - Package metadata for PyPI: authors, links and classifiers.
 - Continuous integration for the tests and the package build.
+- Runs with the L2 retrieval reject simulated wavelengths outside the
+  retrieval's wavelength range, instead of retrieving with no aerosol optical
+  properties at those wavelengths.
 
 ### Fixed
 

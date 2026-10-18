@@ -586,6 +586,12 @@ def _run(cfg: CesmHawcConfig, args: argparse.Namespace) -> None:
     time_index = cfg.case.time_index
 
     if s.run_l2:
+        from cesm_hawc.simulation import check_retrieval_wavelengths
+
+        try:
+            check_retrieval_wavelengths(wavelengths_nm)
+        except ValueError as e:
+            sys.exit(f"[instrument] wavelengths_nm: {e}")
         log.warning("run_l2 is enabled: L2 retrieval takes minutes per profile. "
                     "Confirm your walltime/CPU-hour budget.")
     if s.strip_ozone:

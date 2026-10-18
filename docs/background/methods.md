@@ -89,8 +89,9 @@ distribution with that mode's $\sigma_g$ and the H₂SO₄ refractive index:
 | Median radii | 10–590 nm in 10 nm steps |
 | Single-scattering albedo | clamped below 1 (to 0.99999), as in `aliprocessing` |
 
-The retrieval uses its own database, with wavelengths from 470 to 1650 nm,
-so simulated wavelengths should be within that range.
+The retrieval uses its own database, with wavelengths from 470 to 1650 nm
+(`aliprocessing` 2026.10). When the retrieval runs, cesm-hawc rejects
+simulated wavelengths outside that range.
 
 Extinction is $N \times \sigma_\text{ext}(r_m, \lambda)$, where
 $\sigma_\text{ext}$ is the distribution-weighted total cross-section from

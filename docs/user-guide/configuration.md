@@ -74,7 +74,7 @@ Used by every mode.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `wavelengths_nm` | list of float | `[470.0, 745.0, 1020.0]` | Simulated wavelengths |
+| `wavelengths_nm` | list of float | `[470.0, 745.0, 1020.0]` | Simulated wavelengths. With `run_l2 = true`, each must be within the L2 retrieval's range (470–1650 nm with `aliprocessing` 2026.10); `cesm-hawc run` stops with an error otherwise |
 | `alt_grid_start_m` | m | `0.0` | Altitude grid start |
 | `alt_grid_stop_m` | m | `65000.0` | Altitude grid end (inclusive) |
 | `alt_grid_step_m` | m | `1000.0` | Altitude grid spacing |

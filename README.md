@@ -9,8 +9,7 @@ simulate what the HAWCSat Aerosol Limb Imager would observe.
 
 ## What this does
 
-Given CESM/WACCM history output (any stream, e.g. monthly `h0` or daily
-`h2` files), this package:
+Given CESM/WACCM history output this package:
 
 1. Extracts one or many atmospheric columns (T, P, O₃, MAM4 sulfate aerosol)
 2. Converts MAM4 modal aerosol to extinction profiles using mode-matched Mie databases
@@ -126,6 +125,13 @@ Add these to `fincl` in `user_nl_cam` if not already present:
 | `num_a1`, `num_a3` | Aerosol number mixing ratio (#/kg) |
 
 See [WACCM output variables](https://torimcd.github.io/cesm-hawc/waccm-variables) for details.
+
+## Citing
+
+If you use cesm-hawc in published work, please cite it using the details in
+[`CITATION.cff`](CITATION.cff) (on GitHub, "Cite this repository"), and cite
+the simulator packages it builds on; see
+[Citing cesm-hawc](https://torimcd.github.io/cesm-hawc/citing).
 
 ## Testing
 

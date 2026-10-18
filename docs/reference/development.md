@@ -58,9 +58,15 @@ links between API pages.
 
 ### Continuous integration
 
-`.github/workflows/docs.yml` checks the docstrings, generates the API
-reference and builds the book on every pull request and push. Pushes to
-`main` also publish the site to GitHub Pages.
+- `.github/workflows/tests.yml` runs the base-tier tests on Linux (Python
+  3.11–3.14) and macOS, builds the package, and checks that the built wheel
+  installs and runs. Tests that need the `[sim]` extra skip themselves there;
+  run them locally in the conda environment.
+- `.github/workflows/docs.yml` checks the docstrings, generates the API
+  reference and builds the book. Pushes to `main` also publish the site to
+  GitHub Pages.
+
+Both run on every pull request and on pushes to `main`.
 
 ## Repository layout
 

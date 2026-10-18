@@ -32,8 +32,7 @@ First public release. Changes since 0.2.0:
 ### Removed
 
 - The `orbit-file` mode and `[orbit_real]` table.
-- Background/injection pairing and anomaly diagnostics. Compare cases in
-  your own analysis code instead.
+- Background/injection pairing and anomaly diagnostics.
 - `examples/quickstart.py`. The [Tutorial](../tutorial.ipynb) walks through
   one column, and `cesm-hawc run --mode orbit` covers orbit geometry.
 
@@ -43,6 +42,7 @@ First public release. Changes since 0.2.0:
 - `default_noise_model(seed=...)` for reproducible instrument noise.
 - A step-by-step tutorial notebook.
 - Package metadata for PyPI: authors, links and classifiers.
+- Continuous integration for the tests and the package build.
 
 ### Fixed
 

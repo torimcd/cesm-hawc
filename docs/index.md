@@ -1,8 +1,11 @@
 # cesm-hawc
 
-This package feeds atmosphere model output from the Community Earth System Model v. 2 (CESM2) Whole Atmosphere Community Climate Model (WACCM) into the [High-altitude Aerosols, Water vapor, and Clouds satellite (HAWCsat)  simulator](https://github.com/usask-arg/hawc-simulator), to
-simulate what the Aerosol Limb Imager (ALI) on the HAWCsat satellite would
-observe and retrieve for a given model atmosphere. 
+This package feeds atmosphere model output from the Community Earth System
+Model version 2 (CESM2) Whole Atmosphere Community Climate Model (WACCM) into
+the [HAWC simulator](https://github.com/usask-arg/hawc-simulator), to simulate
+what the Aerosol Limb Imager (ALI) on the High-altitude Aerosols, Water vapour
+and Clouds (HAWC) satellite would observe and retrieve for a given model
+atmosphere.
 
 ## What it does
 
@@ -34,7 +37,7 @@ flowchart TB
 
 | Tier | Install | What you can do |
 |------|---------|-----------------|
-| Base | `pip install cesm-hawc` | Extract WACCM columns and save simulator-ready input files (`cesm-hawc save-inputs`). Needs only numpy/xarray/scipy/pandas. |
+| Base | `pip install cesm-hawc` | Extract WACCM columns and save simulator-ready input files (`cesm-hawc save-inputs`). Needs numpy, xarray, scipy, pandas, netCDF4 and dask. |
 | Simulation | `pip install cesm-hawc[sim]` | Run the forward model and L2 retrieval end to end (`cesm-hawc run`), via `hawcsimulator` and `sasktran2`. |
 
 ## Where to go next
@@ -49,8 +52,8 @@ flowchart TB
 
 | Term | Meaning |
 |------|---------|
-| ALI | Aerosol Limb Imager, the HAWCsat instrument this package simulates |
-| HAWC | High-altitude Aerosols, Water vapour and Clouds mission |
+| ALI | Aerosol Limb Imager, the HAWC instrument this package simulates |
+| HAWC | High-altitude Aerosols, Water vapour and Clouds satellite mission |
 | CESM2 / WACCM | Community Earth System Model v2 / Whole Atmosphere Community Climate Model |
 | MAM4 | Four-mode Modal Aerosol Module used by CESM2 |
 | h0 / h2 | CAM history file streams (here: monthly means / daily or sub-daily output) |

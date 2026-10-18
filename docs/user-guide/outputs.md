@@ -44,11 +44,25 @@ index between runs and can be deleted safely.
 ## L2 variables
 
 The L2 datasets come from the retrieval in `hawcsimulator`/`aliprocessing`.
-The main ones are:
+Profiles are on the `altitude` coordinate [m]; in `l2_retrieval.nc` every
+variable also has the `along_track` dimension.
 
 | Variable | Units | Description |
 |----------|-------|-------------|
-| `stratospheric_aerosol_extinction_per_m` | m⁻¹ | Retrieved extinction at 745 nm |
+| `stratospheric_aerosol_extinction_per_m` | m⁻¹ | Retrieved aerosol extinction at 745 nm |
 | `stratospheric_aerosol_median_radius` | nm | Retrieved lognormal median radius |
+| `o3_vmr` | mol/mol | Retrieved ozone volume mixing ratio |
+| `lambertian_albedo` | — | Retrieved surface albedo, per wavelength (`wavelengths_nm`) |
+| `solar_zenith_angle`, `solar_azimuth_angle`, `solar_scattering_angle` | degrees | Solar geometry of the observation |
+| `num_iterations` | — | Retrieval iterations |
+| `cost` | — | Final value of the retrieval cost function |
 
-% TODO: list the remaining L2 variables and their units.
+Each retrieved quantity also has these companions, in the same units:
+
+| Suffix | Description |
+|--------|-------------|
+| `_prior` | The prior (a priori) profile |
+| `_1sigma_error` | 1σ uncertainty of the retrieved value |
+| `_averaging_kernel` | Averaging kernel, on (`altitude`, `altitude_2`); unitless |
+
+`lambertian_albedo` has only `_1sigma_error`.

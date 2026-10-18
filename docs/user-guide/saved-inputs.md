@@ -84,11 +84,14 @@ constituents = {
 sim_input = {
     "tangent_latitude": ds.attrs["latitude"],
     "tangent_longitude": ds.attrs["longitude"],
-    "tangent_solar_zenith_angle": 60.0,   # or, for orbit files, the observer_* attrs
+    # Fixed geometry. For a file from orbit mode, instead pass
+    # observer_latitude, observer_longitude and observer_altitude from
+    # ds.attrs, and the solar angles are computed from the time.
+    "tangent_solar_zenith_angle": 60.0,
     "tangent_solar_azimuth_angle": 0.0,
     "altitude_grid": alt_m,
     "polarization_states": ["I", "dolp"],
-    "sample_wavelengths": [470.0, 745.0, 1020.0],
+    "sample_wavelengths": ds["wavelength_nm"].values,
     "time": ds.attrs["time"],
     "l1b_cfg": {"noise_model": ALINoiseModel(straylight_fraction=0.0)},
     "constituents": constituents,
@@ -97,7 +100,10 @@ data = IdealALISimulator().run(["l2", "front_end_radiance", "l1b"], sim_input)
 ```
 
 This matches what `cesm-hawc run` does: the `ideal_dolp_imager` instrument
-model with the same noise model.
+model with the same noise model. The one difference is that cesm-hawc caps
+the Mie databases' single-scattering albedo just below 1 (see
+[Methods](../background/methods.md#extinction)), which changes the simulated
+radiance by less than 0.1%.
 
 ```{note}
 The Mie databases are rebuilt from scratch the first time this runs, which

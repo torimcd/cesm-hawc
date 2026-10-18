@@ -22,6 +22,12 @@ pip install -e ".[sim,dev]"
 `environment.yml` installs `sasktran2` and the scientific stack from
 conda-forge, plus `hawcsimulator` and `aliprocessing` from PyPI.
 
+```{tip}
+For the `[sim]` tier, the conda environment is the tested setup. It keeps
+every compiled package on conda-forge's builds, which avoids conflicts
+between copies of the OpenMP library bundled in pip wheels.
+```
+
 ## Checking the install
 
 ```bash

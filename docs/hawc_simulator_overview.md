@@ -8,6 +8,9 @@ Every simulator runs the same four-stage pipeline:
 
 Atmosphere → Limb Observation Geometry → Radiative Transfer (FER) → Instrument Model → (optional: POR + L2)
 
+POR is the "program of record": the background temperature, pressure and
+tropopause height the retrieval uses as ancillary data.
+
 1. Atmosphere — builds atmospheric constituents (Rayleigh, O3, aerosol, solar irradiance, albedo)
 2. Limb Observation — sets up viewing geometry with tangent altitudes + 450 km observer altitude
 3. FER (Front-End Radiance) — runs SASKTRAN2 radiative transfer to produce Stokes I, Q, U
@@ -21,21 +24,23 @@ cesm-hawc uses the imager variant (`ideal_dolp_imager`).
 |--------|----------------------------------|----------------------------|---------------------------|
 | File | `ideal_spectrograph.py` | `ideal_dolp_imager.py` | `full_inst.py` |
 | Instrument step | `ideal_inst` | `ideal_imager` | `full_inst` |
-| Measurement model | Direct Stokes I, Q, U with added noise | Mueller matrix from 3 polarization angles | Realistic L1A→L1B via `ali_l1` package |
-| Min tangent alt | 10 km | -500 m | -500 m |
-| Wavelengths | 400–800 nm (continuous) | 400–800 nm (continuous) | 11 specific bands: 610–1560 nm |
-| Error modeling | Fixed DOLP/AOLP/intensity errors | Noise propagated through Mueller inversion + systematic errors | Realistic detector noise/gains |
+| Measurement model | Direct Stokes I, Q, U | Mueller matrix from 3 polarization angles | Realistic L1A→L1B via `ali_l1` package |
+| Tangent altitudes | 10–40 km | −0.5–50 km | from −0.5 km |
+| Wavelengths | Any, set by `sample_wavelengths` | Any, set by `sample_wavelengths` | 11 specific bands: 610–1560 nm |
+| Error modeling | Fixed DOLP/AOLP/intensity uncertainties; noise added only if `include_noise=True` | Noise model propagated through the Mueller inversion, plus systematic errors | Realistic detector noise/gains |
 | External dep | None | None | `ali_l1` package required |
 
 ### Spectrograph (`ideal_inst`)
 
 `inst_model.py` / `steps/ideal_inst.py`
 
-The simplest model. It directly measures Stokes parameters and adds configurable Gaussian errors:
+The simplest model. It directly measures Stokes parameters, with configurable Gaussian uncertainties:
 
 - `intensity_error`: 1% (default)
 - `dolp_error`: 0.003
 - `aolp_error`: 0.2°
+
+Random noise with these uncertainties is added only when `include_noise=True`; by default the measurements are noise-free. It does not use the `noise_model` passed in `l1b_cfg`.
 
 Can output any combination of I, dolp, aolp, q. This is the "ideal" in the sense that the instrument is assumed to directly observe polarization state without optical complexity.
 

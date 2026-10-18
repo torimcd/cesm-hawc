@@ -4,10 +4,12 @@ This walks through one column from one WACCM history file, end to end.
 
 ## 1. Write a config file
 
-Copy the template from the repository root and edit the paths:
+Start from the template, [`config.example.toml`](https://github.com/torimcd/cesm-hawc/blob/main/config.example.toml)
+in the repository root. If you installed from PyPI, download it from GitHub
+first:
 
 ```bash
-cp config.example.toml config.toml
+curl -o config.toml https://raw.githubusercontent.com/torimcd/cesm-hawc/main/config.example.toml
 ```
 
 For a fixed column you need the `[case]` and `[fixed]` tables (`[instrument]`

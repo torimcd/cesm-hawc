@@ -48,8 +48,9 @@ highest or lowest level are held at the end values.
 
 WACCM carries tropospheric humidity `Q` and a stratospheric chemistry tracer
 `H2O`. They are blended with a cosine taper in log pressure, centred at
-100 hPa and one decade wide: `Q` (converted to a mixing ratio) below,
-`H2O` above.
+100 hPa and spread over a factor of 10 in pressure (about 316 to 32 hPa):
+`Q` (converted to a mixing ratio) below, `H2O` above. The blended water
+vapour is saved with each column but is not passed to the simulator.
 
 ## Sulfate aerosol
 
@@ -88,6 +89,9 @@ distribution with that mode's $\sigma_g$ and the H₂SO₄ refractive index:
 | Median radii | 10–590 nm in 10 nm steps |
 | Single-scattering albedo | clamped below 1 (to 0.99999), as in `aliprocessing` |
 
+The retrieval uses its own database, with wavelengths from 470 to 1650 nm,
+so simulated wavelengths should be within that range.
+
 Extinction is $N \times \sigma_\text{ext}(r_m, \lambda)$, where
 $\sigma_\text{ext}$ is the distribution-weighted total cross-section from
 that database. Median radii are clipped to 10–590 nm. Where $r_m$ is below
@@ -105,11 +109,11 @@ every wavelength.
 `hawcsimulator`'s default atmosphere contains Rayleigh scattering, MIPAS
 standard ozone, solar irradiance and a Lambertian surface with albedo 0.3.
 cesm-hawc replaces the MIPAS ozone with WACCM ozone and adds WACCM NO₂ and
-the two sulfate modes.
+the two sulfate modes. No other WACCM fields enter the radiative transfer.
 
-The L2 retrieval does not see these assumptions. It retrieves a single
-lognormal aerosol mode with $\sigma_g = 1.6$ (`aliprocessing`), with ozone
-constrained closely to the MIPAS climatology.
+The L2 retrieval knows nothing about this simulated atmosphere. It retrieves
+a single lognormal aerosol mode with $\sigma_g = 1.6$ (`aliprocessing`), and
+holds ozone close to the MIPAS climatology.
 
 ## Instrument model
 
@@ -118,15 +122,14 @@ cesm-hawc uses the `ideal_dolp_imager` configuration of `hawcsimulator`'s
 polarization angles and recovers radiance and degree of linear polarization,
 with tangent altitudes from −0.5 to 50 km.
 
-% TODO: explain why ideal_dolp_imager was chosen over ideal_spectrograph.
-
 ### Instrument noise
 
 Noise comes from `hawcsimulator.noise.ALINoiseModel` with
-`straylight_fraction = 0` (the upstream default is 0.02). The model is not
-seeded, so repeated runs draw different noise.
+`straylight_fraction = 0` (the upstream default is 0.02). The CLI doesn't
+seed it, so repeated runs draw different noise; from Python, pass a `seed`
+to `cesm_hawc.noise.default_noise_model` for reproducible noise.
 
-% TODO: state the rationale for straylight_fraction = 0.
+
 
 ## Orbit sampling
 

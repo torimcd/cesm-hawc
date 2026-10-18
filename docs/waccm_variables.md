@@ -4,20 +4,22 @@
 
 Add any missing variables to `fincl` in `user_nl_cam` before running WACCM.
 
-| Variable | Units | Description | Critical? |
-|----------|-------|-------------|-----------|
-| `T` | K | Temperature on hybrid levels | Required |
-| `Q` | kg/kg | Specific humidity (dynamics) | Required |
-| `PS` | Pa | Surface pressure | Required |
-| `hyam`, `hybm` | — | Hybrid sigma coefficients | Required |
-| `O3` | mol/mol | Ozone VMR | **KEY** |
-| `NO2` | mol/mol | NO₂ VMR | KEY (zeros if absent) |
-| `H2O` | mol/mol | Chemistry H₂O (blended with Q above 100 hPa) | KEY |
-| `SO2` | mol/mol | Gas-phase SO₂ (precursor diagnostic) | KEY |
-| `so4_a1` | kg/kg | Accumulation mode sulfate mass mixing ratio | **KEY** |
-| `so4_a3` | kg/kg | Coarse mode sulfate mass mixing ratio | **KEY** |
-| `num_a1` | #/kg | Accumulation mode number mixing ratio | **KEY** |
-| `num_a3` | #/kg | Coarse mode number mixing ratio | **KEY** |
+| Variable | Units | Description | If missing |
+|----------|-------|-------------|------------|
+| `T` | K | Temperature on hybrid levels | Error |
+| `Q` | kg/kg | Specific humidity | Error |
+| `PS` | Pa | Surface pressure | Error |
+| `hyam`, `hybm` | — | Hybrid level coefficients | Error |
+| `P0` | Pa | Reference pressure | Warning; 100 000 Pa assumed |
+| `O3` | mol/mol | Ozone, used in the simulation | Warning; treated as zero |
+| `NO2` | mol/mol | NO₂, used in the simulation | Warning; treated as zero |
+| `so4_a1`, `so4_a3` | kg/kg | Accumulation / coarse mode sulfate mass mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
+| `num_a1`, `num_a3` | #/kg | Accumulation / coarse mode number mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
+| `H2O` | mol/mol | Chemistry water vapour, saved with the column only | Warning; `Q` is used throughout |
+| `SO2` | mol/mol | Gas-phase SO₂, saved with the column only | Warning; treated as zero |
+
+`H2O` and `SO2` are extracted and saved by `save-inputs`, but the simulator
+doesn't use them.
 
 ## Example fincl addition in user_nl_cam
 
@@ -47,8 +49,13 @@ WACCM has two H₂O fields:
 - `Q` (specific humidity): well-constrained in the troposphere
 - `H2O` (chemistry tracer): well-constrained in the stratosphere
 
-The module blends them with a cosine taper centred at 100 hPa (default),
-with a transition width of one decade in log-pressure.
+cesm-hawc combines them into one water vapour profile, using `Q` below the
+tropopause and `H2O` above it. The switch is centred at 100 hPa and spread
+over a factor of 10 in pressure (about 316 to 32 hPa), with a smooth cosine
+weighting so each field contributes half at 100 hPa.
+
+The combined profile is saved as `vmr_h2o` in the files `save-inputs`
+writes, but the simulator doesn't use it.
 
 ## References
 

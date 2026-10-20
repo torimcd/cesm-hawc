@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from cesm_hawc.waccm import WACCMAtmosphere
 
@@ -72,3 +73,49 @@ def test_save_and_extract_cesm_extinction_roundtrip(tmp_path, synthetic_waccm_fi
     # absent (synthetic fixture doesn't define them) -- returns {} cleanly.
     extracted = atm.extract_cesm_extinction(30.6, 180.0, 0, np.arange(0.0, 65001.0, 1000.0))
     assert extracted == {}
+
+
+def _with_wet_diameters(path, tmp_path, d1_m=2.0e-7, d3_m=6.0e-7):
+    """Copy of a synthetic history file with constant wet diameters added."""
+    import xarray as xr
+
+    ds = xr.load_dataset(path)
+    shape = ds["so4_a1"].shape
+    dims = ds["so4_a1"].dims
+    ds["dgnumwet1"] = (dims, np.full(shape, d1_m))
+    ds["dgnumwet3"] = (dims, np.full(shape, d3_m))
+    out = tmp_path / "with_wet.cam.h0.2030-01.nc"
+    ds.to_netcdf(out)
+    return out
+
+
+def test_wet_diameter_sets_median_radius(tmp_path, synthetic_waccm_file):
+    path = _with_wet_diameters(synthetic_waccm_file, tmp_path)
+    atm = WACCMAtmosphere(str(path), alt_grid_km=np.arange(0.0, 65.001, 1.0))
+    p = atm.get_column_profiles(lat=30.6, lon=180.0)
+
+    np.testing.assert_allclose(p["sulfate_a1_r_um"], 0.1)
+    np.testing.assert_allclose(p["sulfate_a3_r_um"], 0.3)
+    assert p["sulfate_a1_radius_source"] == "wet_diameter"
+    assert p["sulfate_a3_radius_source"] == "wet_diameter"
+
+
+def test_missing_wet_diameter_falls_back_to_dry_mass_radius(synthetic_waccm_file):
+    with pytest.warns(UserWarning, match="dgnumwet"):
+        atm = WACCMAtmosphere(str(synthetic_waccm_file), alt_grid_km=np.arange(0.0, 65.001, 1.0))
+    p = atm.get_column_profiles(lat=30.6, lon=180.0)
+    assert p["sulfate_a1_radius_source"] == "dry_mass"
+    assert np.all(p["sulfate_a1_r_um"] > 0)
+
+
+def test_wet_diameter_changes_radius_but_not_number_or_burden(tmp_path, synthetic_waccm_file):
+    grid = np.arange(0.0, 65.001, 1.0)
+    dry = WACCMAtmosphere(str(synthetic_waccm_file), alt_grid_km=grid)
+    wet = WACCMAtmosphere(str(_with_wet_diameters(synthetic_waccm_file, tmp_path)), alt_grid_km=grid)
+    p_dry = dry.get_column_profiles(lat=30.6, lon=180.0)
+    p_wet = wet.get_column_profiles(lat=30.6, lon=180.0)
+
+    np.testing.assert_allclose(p_wet["sulfate_a1_N_cm3"], p_dry["sulfate_a1_N_cm3"])
+    np.testing.assert_allclose(p_wet["sulfate_a1_dry_mass_kg_m3"], p_dry["sulfate_a1_dry_mass_kg_m3"])
+    assert (wet.sulfate_column_burden(30.6, 180.0)["burden_mg_m2"]
+            == pytest.approx(dry.sulfate_column_burden(30.6, 180.0)["burden_mg_m2"]))

@@ -26,6 +26,12 @@ First public release. Changes since 0.2.0:
   - `run_l2` and `strip_ozone` now apply to both modes.
 - **Breaking:** `run_ali_simulation` takes one history file and returns the
   simulator output, truth extinction and sulfate burden.
+- **Changes results:** sulfate median radii now come from CESM's wet median
+  diameters (`dgnumwet1`, `dgnumwet3`) when the history file has them,
+  instead of being derived from dry sulfate mass with an assumed density. Files without
+  wet diameters fall back to the old method with a warning.
+- The sulfate burden is computed directly from the dry sulfate mass mixing
+  ratios, and saved columns include the dry mass concentration of each mode.
 - `save-inputs --mode orbit` now records each observation's time and
   satellite position in the saved file, and supports sub-daily output.
 

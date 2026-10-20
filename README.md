@@ -121,8 +121,9 @@ Add these to `fincl` in `user_nl_cam` if not already present:
 | `T`, `Q`, `PS` | Temperature, humidity, surface pressure (required) |
 | `hyam`, `hybm`, `P0` | Hybrid level coefficients and reference pressure (`hyam`, `hybm` required) |
 | `O3`, `NO2`, `SO2`, `H2O` | Gas chemistry (mol/mol) |
-| `so4_a1`, `so4_a3` | Sulfate mass mixing ratio (kg/kg) |
+| `so4_a1`, `so4_a3` | Dry sulfate mass mixing ratio (kg/kg) |
 | `num_a1`, `num_a3` | Aerosol number mixing ratio (#/kg) |
+| `dgnumwet1`, `dgnumwet3` | Aerosol wet median diameter (m) |
 
 See [WACCM output variables](https://torimcd.github.io/cesm-hawc/waccm-variables) for details.
 

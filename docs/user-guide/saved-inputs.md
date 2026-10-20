@@ -17,10 +17,14 @@ Every file contains the extracted WACCM profile on `altitude_m` [m]:
 | `vmr_h2o` | mol/mol | Water vapour, blended from `Q` and chemistry `H2O` |
 | `n_air_cm3` | cm⁻³ | Air number density |
 | `sulfate_a1_N_cm3`, `sulfate_a3_N_cm3` | cm⁻³ | Accumulation / coarse mode number concentration |
-| `sulfate_a1_r_um`, `sulfate_a3_r_um` | μm | Accumulation / coarse mode median radius |
+| `sulfate_a1_r_um`, `sulfate_a3_r_um` | μm | Accumulation / coarse mode wet median radius |
+| `sulfate_a1_dry_mass_kg_m3`, `sulfate_a3_dry_mass_kg_m3` | kg m⁻³ | Accumulation / coarse mode dry sulfate mass concentration |
 
 with attributes `latitude`, `longitude`, `time_index`, `sigma_a1`,
-`sigma_a3` and `time` (the observation time). Files from `orbit` mode also
+`sigma_a3`, `time` (the observation time), and `radius_source_a1` and
+`radius_source_a3`: `"wet_diameter"` if the radius came from CESM's wet
+diameter, `"dry_mass"` if it was derived from dry sulfate mass (see
+[Methods](../background/methods.md#number-and-median-radius)). Files from `orbit` mode also
 record the satellite position as `observer_latitude`, `observer_longitude`
 [degrees] and `observer_altitude` [m].
 

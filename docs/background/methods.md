@@ -64,19 +64,29 @@ Aitken mode (`_a2`) is not used.
 
 ### Number and median radius
 
-For each level, number concentration $N$ and lognormal median radius $r_m$
-follow from the mode's sulfate mass mixing ratio and number mixing ratio,
-using the lognormal mass moment
+For each level, the number concentration $N$ is the mode's number mixing
+ratio (`num_a1`, `num_a3`) times the air density, which is computed from the
+level's pressure and temperature. $N$ is floored at 1 m⁻³.
+
+The lognormal median radius $r_m$ is half of CESM's wet median diameter for
+the mode (`dgnumwet1`, `dgnumwet3`). These include the water the particles
+take up, so they describe the hydrated sulfuric-acid droplets the Mie
+calculations below assume, and they are the sizes CESM's own aerosol optics
+use. $r_m$ is floored at 1 nm.
+
+If a history file has no wet diameters, $r_m$ is instead derived from the
+mode's dry sulfate mass mixing ratio (`so4_a1`, `so4_a3`) and number, using
+the lognormal mass moment
 
 $$
 M = N \cdot \tfrac{4}{3}\pi \rho \, r_m^3 \exp\!\left(\tfrac{9}{2}\ln^2\sigma_g\right),
 $$
 
-with particle density $\rho = 1600$ kg m⁻³. Air density is computed from the
-level's pressure and temperature. $N$ is floored at 1 m⁻³ and $r_m$ at 1 nm.
-
-% TODO: give the source for rho = 1600 kg m-3 and state whether so4_a* mass
-% is treated as dry sulfate.
+with $\rho = 1600$ kg m⁻³. This ignores water uptake, so it underestimates
+the wet radius: by about 10–25% in the stratospheric aerosol layer for a
+WACCM column we compared, and more near the tropopause. cesm-hawc warns when
+it falls back to this method, and records which method was used in saved
+files (`radius_source_a1`, `radius_source_a3`).
 
 ### Extinction
 
@@ -95,7 +105,9 @@ simulated wavelengths outside that range.
 
 Extinction is $N \times \sigma_\text{ext}(r_m, \lambda)$, where
 $\sigma_\text{ext}$ is the distribution-weighted total cross-section from
-that database. Median radii are clipped to 10–590 nm. Where $r_m$ is below
+that database. Median radii are clipped to 10–590 nm. Wet coarse-mode radii
+can exceed 590 nm near and below the tropopause, where their extinction is
+therefore underestimated. Where $r_m$ is below
 10 nm the extinction is set to zero. Truth extinction at other wavelengths is
 taken at the nearest database wavelength, so configured wavelengths should be
 on the list above.
@@ -151,8 +163,9 @@ placed on the simulated model dates:
 
 ## Sulfate burden
 
-`WACCMAtmosphere.sulfate_column_burden` integrates the sulfate mass of both
-modes between 15 and 35 km, giving the burden in mg m⁻². `fixed` mode
+`WACCMAtmosphere.sulfate_column_burden` integrates the dry sulfate mass
+concentration of both modes (the `so4` mass mixing ratios times air density)
+between 15 and 35 km, giving the burden in mg m⁻². `fixed` mode
 reports it in each file's `summary.txt`.
 
 ## References

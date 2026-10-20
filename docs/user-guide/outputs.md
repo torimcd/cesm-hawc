@@ -24,7 +24,7 @@ Per history file, under `<file>/`:
 | `l1b.nc` | L1b radiance, DoLP and their noise (`wavelength` × `altitude_m`), plus per-mode truth extinction on the instrument grid and on the model grid (`*_atm`, dim `atm_altitude_m`) |
 | `l2.nc` | L2 retrieval output (`run_l2 = true` only) |
 | `cesm_extinction.nc` | CESM's own aerosol extinction (`EXTINCTdn` etc.) on the same grid, if present in the file |
-| `summary.txt` | File, time, location and 15–35 km sulfate burden |
+| `summary.txt` | File, time, location and 15–35 km dry sulfate burden |
 
 ## `run --mode orbit`
 

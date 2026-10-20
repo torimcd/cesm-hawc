@@ -13,8 +13,9 @@ Add any missing variables to `fincl` in `user_nl_cam` before running WACCM.
 | `P0` | Pa | Reference pressure | Warning; 100 000 Pa assumed |
 | `O3` | mol/mol | Ozone, used in the simulation | Warning; treated as zero |
 | `NO2` | mol/mol | NO₂, used in the simulation | Warning; treated as zero |
-| `so4_a1`, `so4_a3` | kg/kg | Accumulation / coarse mode sulfate mass mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
+| `so4_a1`, `so4_a3` | kg/kg | Accumulation / coarse mode dry sulfate mass mixing ratio | Warning; the whole mode is left out of the simulation |
 | `num_a1`, `num_a3` | #/kg | Accumulation / coarse mode number mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
+| `dgnumwet1`, `dgnumwet3` | m | Accumulation / coarse mode wet median diameter, giving the particle size used in the simulation | Warning; the radius is derived from dry sulfate mass instead, which ignores water uptake |
 | `H2O` | mol/mol | Chemistry water vapour, saved with the column only | Warning; `Q` is used throughout |
 | `SO2` | mol/mol | Gas-phase SO₂, saved with the column only | Warning; treated as zero |
 
@@ -24,7 +25,8 @@ doesn't use them.
 ## Example fincl addition in user_nl_cam
 
 ```
-fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a3', 'num_a1', 'num_a3'
+fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a3', 'num_a1', 'num_a3',
+         'dgnumwet1', 'dgnumwet3'
 ```
 
 ## MAM4 mode parameters (WACCM/BWSSP245)

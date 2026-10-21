@@ -83,8 +83,7 @@ M = N \cdot \tfrac{4}{3}\pi \rho \, r_m^3 \exp\!\left(\tfrac{9}{2}\ln^2\sigma_g\
 $$
 
 with $\rho = 1600$ kg m⁻³. This ignores water uptake, so it underestimates
-the wet radius: by about 10–25% in the stratospheric aerosol layer for a
-WACCM column we compared, and more near the tropopause. cesm-hawc warns when
+the wet radius. cesm-hawc warns when
 it falls back to this method, and records which method was used in saved
 files (`radius_source_a1`, `radius_source_a3`).
 

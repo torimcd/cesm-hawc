@@ -67,10 +67,3 @@ an hour.
   within a day.
 - **Compute nodes without internet are fine.** cesm-hawc turns off astropy's
   automatic Earth-orientation downloads.
-
-## Runtime
-
-The L2 retrieval dominates the runtime. In a test run of 180 orbit profiles
-at 7 wavelengths, each profile
-took a median of about 4 minutes (10th–90th percentile: 2–9 minutes, longest
-26 minutes) on one core.

@@ -58,7 +58,7 @@ More physically realistic polarimetric model. It simulates a filter-based imagin
 
 `configurations/full_inst.py` / `steps/full_inst.py`
 
-The highest-fidelity model, representing the actual planned ALI instrument. It uses the external `ali_l1` package to simulate realistic L1A→L1B detector processing (gains, detector response, specific band filter set). Only operates at 11 specific wavelength bands (610–1560 nm) rather than a continuous spectrum.
+The highest-fidelity model, representing the actual planned ALI instrument. It uses the external `ali_l1` package to simulate realistic L1A→L1B detector processing (gains, detector response, specific band filter set). Only operates at 11 specific wavelength bands (610–1560 nm) rather than a continuous spectrum. This configuration is not supported by CESM-HAWC for modelling studies.
 
 ## Where to Look
 

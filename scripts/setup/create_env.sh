@@ -23,6 +23,7 @@ micromamba create -n hawc_env -c conda-forge \
     python=3.11 \
     sasktran2 \
     xarray \
+    netcdf4 \
     scipy \
     numpy \
     matplotlib \

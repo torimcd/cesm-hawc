@@ -19,16 +19,28 @@ Given CESM/WACCM history output this package:
 Requires Python >=3.11. It has two tiers:
 
 - **Base** (`pip install cesm-hawc`) — WACCM column extraction and saving
-  simulator-ready inputs. Only needs
-  numpy/xarray/scipy/pandas.
-- **`[sim]` extra** (`pip install cesm-hawc[sim]`) — the full forward model
-  and L2 retrieval, via `hawcsimulator` + `sasktran2`.
+  simulator-ready inputs. Only needs numpy, xarray, scipy, pandas, netCDF4
+  and dask.
+- **`[sim]` extra** — the full forward model and L2 retrieval, via
+  `hawcsimulator` + `sasktran2`. Install it into the project's conda
+  environment (see below).
 
 ## Install
 
+To run the simulator, install into the project's conda environment
+(recommended):
+
 ```bash
-pip install cesm-hawc          # base tier
-pip install cesm-hawc[sim]     # + full simulator
+curl -O https://raw.githubusercontent.com/torimcd/cesm-hawc/main/environment.yml
+conda env create -f environment.yml
+conda activate hawc_env
+pip install "cesm-hawc[sim]"
+```
+
+For the base tier only (no simulator), pip on its own is enough:
+
+```bash
+pip install cesm-hawc
 ```
 
 **From source (development):**
@@ -36,10 +48,13 @@ pip install cesm-hawc[sim]     # + full simulator
 ```bash
 git clone https://github.com/torimcd/cesm-hawc
 cd cesm-hawc
-micromamba env create -f environment.yml
-micromamba activate hawc_env
+conda env create -f environment.yml
+conda activate hawc_env
 pip install -e ".[sim,dev]"
 ```
+
+See the [installation guide](https://torimcd.github.io/cesm-hawc/installation)
+for details.
 
 **Alliance Canada HPC (Fir/Rorqual/Narval):**
 

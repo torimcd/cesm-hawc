@@ -5,8 +5,8 @@
 ```bash
 git clone https://github.com/torimcd/cesm-hawc
 cd cesm-hawc
-micromamba env create -f environment.yml
-micromamba activate hawc_env
+conda env create -f environment.yml
+conda activate hawc_env
 pip install -e ".[sim,dev,docs]"
 ```
 

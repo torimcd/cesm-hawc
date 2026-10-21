@@ -38,7 +38,7 @@ flowchart TB
 | Tier | Install | What you can do |
 |------|---------|-----------------|
 | Base | `pip install cesm-hawc` | Extract WACCM columns and save simulator-ready input files (`cesm-hawc save-inputs`). Needs numpy, xarray, scipy, pandas, netCDF4 and dask. |
-| Simulation | `pip install cesm-hawc[sim]` | Run the forward model and L2 retrieval end to end (`cesm-hawc run`), via `hawcsimulator` and `sasktran2`. |
+| Simulation | `pip install "cesm-hawc[sim]"` in the project's conda environment (see [Installation](installation.md)) | Run the forward model and L2 retrieval end to end (`cesm-hawc run`), via `hawcsimulator` and `sasktran2`. |
 
 ## Where to go next
 

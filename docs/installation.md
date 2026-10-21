@@ -2,31 +2,54 @@
 
 cesm-hawc requires **Python 3.11 or later**.
 
-## From PyPI
+## Recommended: conda environment
+
+To run the simulator (`cesm-hawc run`, the `[sim]` tier), install cesm-hawc
+into the conda environment defined by the project's `environment.yml`. It
+installs `sasktran2` and the scientific stack from conda-forge, and
+`hawcsimulator` and `aliprocessing` from PyPI, in versions that work
+together.
 
 ```bash
-pip install cesm-hawc          # base tier: column extraction and save-inputs
-pip install cesm-hawc[sim]     # + forward model and L2 retrieval
+curl -O https://raw.githubusercontent.com/torimcd/cesm-hawc/main/environment.yml
+conda env create -f environment.yml
+conda activate hawc_env
+pip install "cesm-hawc[sim]"
+```
+
+`mamba` and `micromamba` accept the same commands in place of `conda`.
+
+```{tip}
+The conda environment is the tested setup for the `[sim]` tier. It keeps
+every compiled package on conda-forge's builds, which avoids conflicts
+between copies of the OpenMP library bundled in pip wheels.
+```
+
+## Base tier only
+
+Extracting WACCM columns and saving simulator-ready inputs
+(`cesm-hawc save-inputs`) needs no simulator, and installs with pip in any
+Python 3.11+ environment:
+
+```bash
+pip install cesm-hawc
 ```
 
 ## From source
 
+For development, clone the repository and install it in editable mode into
+the same conda environment:
+
 ```bash
 git clone https://github.com/torimcd/cesm-hawc
 cd cesm-hawc
-micromamba env create -f environment.yml
-micromamba activate hawc_env
+conda env create -f environment.yml
+conda activate hawc_env
 pip install -e ".[sim,dev]"
 ```
 
-`environment.yml` installs `sasktran2` and the scientific stack from
-conda-forge, plus `hawcsimulator` and `aliprocessing` from PyPI.
-
-```{tip}
-For the `[sim]` tier, the conda environment is the tested setup. It keeps
-every compiled package on conda-forge's builds, which avoids conflicts
-between copies of the OpenMP library bundled in pip wheels.
-```
+See [Development](reference/development.md) for running the tests and
+building these docs.
 
 ## Checking the install
 

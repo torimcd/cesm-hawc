@@ -1,7 +1,13 @@
 # Citing cesm-hawc
 
-If you use cesm-hawc in published work, please cite the software. The repository's `CITATION.cff` file has the citation
-details; on GitHub, use "Cite this repository".
+If you use cesm-hawc in published work, please cite the software:
+
+> McDonald, V.: cesm-hawc, Zenodo, <https://doi.org/10.5281/zenodo.23630940>.
+
+This DOI always points to the latest release; Zenodo also gives each release
+its own DOI, listed on that page, for citing the exact version you used. The
+repository's `CITATION.cff` file has the full citation details; on GitHub,
+use "Cite this repository".
 
 Please also cite the packages that do the radiative transfer and retrieval,
 giving the versions you used (`pip show hawcsimulator aliprocessing sasktran2`):

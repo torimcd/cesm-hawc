@@ -13,6 +13,7 @@ authors:
     affiliation: "University of Victoria"
 version: "0.3.0"
 date-released: "2026-10-24"
+doi: "10.5281/zenodo.23630940"
 license: MIT
 repository-code: "https://github.com/torimcd/cesm-hawc"
 url: "https://torimcd.github.io/cesm-hawc/"

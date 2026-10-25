@@ -1,5 +1,7 @@
 # cesm-hawc
 
+[![DOI](https://zenodo.org/badge/1210983406.svg)](https://doi.org/10.5281/zenodo.23630940)
+
 Feed CESM2/WACCM atmosphere model output into the
 [HAWC ALI simulator](https://github.com/usask-arg/hawc-simulator) to
 simulate what the HAWCSat Aerosol Limb Imager would observe.

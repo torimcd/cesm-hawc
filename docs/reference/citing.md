@@ -35,7 +35,3 @@ for commercial use, contact its authors.
 - Mills, M. J., et al. (2016). Global volcanic aerosol properties derived from
   emissions, 1990–2014, using CESM1(WACCM). *J. Geophys. Res. Atmos.*, 121,
   2332–2348.
-- Richter, J. H., et al. (2022). Assessing Responses and Impacts of Solar
-  climate intervention on the Earth system with stratospheric aerosol
-  injection (ARISE-SAI): protocol and initial results from the first
-  simulations. *Geosci. Model Dev.*, 15, 8221–8243.

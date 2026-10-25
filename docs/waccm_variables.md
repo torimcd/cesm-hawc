@@ -63,4 +63,3 @@ writes, but the simulator doesn't use it.
 
 - Mills et al. (2016), *J. Geophys. Res. Atmos.*, 121, 2332–2348
 - Liu et al. (2016), *Geosci. Model Dev.*, 9, 505–522
-- Richter et al. (2022), ARISE-SAI protocol, *Geosci. Model Dev.*, 15, 8221–8243

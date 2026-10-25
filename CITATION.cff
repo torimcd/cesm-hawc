@@ -11,7 +11,8 @@ authors:
     given-names: Victoria
     orcid: "https://orcid.org/0000-0001-5432-1983"
     affiliation: "University of Victoria"
-version: "1.0.0"
+version: "0.3.0"
+date-released: "2026-10-24"
 license: MIT
 repository-code: "https://github.com/torimcd/cesm-hawc"
 url: "https://torimcd.github.io/cesm-hawc/"

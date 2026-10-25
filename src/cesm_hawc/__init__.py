@@ -12,4 +12,4 @@ from cesm_hawc.env import configure_environment
 
 __all__ = ["configure_environment"]
 
-__version__ = "1.0.0"  # the package version; pyproject.toml reads it from here
+__version__ = "0.3.0"  # the package version; pyproject.toml reads it from here

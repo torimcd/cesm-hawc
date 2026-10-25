@@ -3,7 +3,7 @@
 All notable changes to cesm-hawc are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 1.0.0 — unreleased
+## 0.3.0 — 2026-10-24
 
 First public release. Changes since 0.2.0:
 

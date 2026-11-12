@@ -51,11 +51,12 @@ def test_save_column_inputs_with_constituents(tmp_path, synthetic_waccm_file):
     ds = xr.open_dataset(out_path)
     assert bool(ds.attrs["includes_constituents"])
     assert ds.attrs["mode_width_accum"] == 1.6
+    assert ds.attrs["mode_width_aitken"] == 1.6
     assert ds.attrs["mode_width_coarse"] == 1.2
     assert ds.attrs["mie_refractive_index"] == "H2SO4"
     np.testing.assert_array_equal(ds["wavelength_nm"].values, wavelengths_nm)
 
-    for mode in ("aerosol_accum", "aerosol_coarse"):
+    for mode in ("aerosol_accum", "aerosol_aitken", "aerosol_coarse"):
         assert ds[f"{mode}_extinction_per_m"].dims == ("wavelength_nm", "altitude_m")
         assert ds[f"{mode}_reference_extinction_per_m"].dims == ("altitude_m",)
         assert ds[f"{mode}_median_radius_nm"].dims == ("altitude_m",)

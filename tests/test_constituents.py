@@ -13,7 +13,7 @@ from conftest import ALT_GRID_M, load_profiles_dict
 def test_build_waccm_constituents_from_example_fixture(example_column_path):
     profiles = load_profiles_dict(example_column_path)
     constituents = build_waccm_constituents(profiles, ALT_GRID_M)
-    assert set(constituents.keys()) == {"o3", "no2", "aerosol_accum", "aerosol_coarse"}
+    assert set(constituents.keys()) == {"o3", "no2", "aerosol_accum", "aerosol_aitken", "aerosol_coarse"}
 
 
 def test_build_waccm_constituents_return_extinction(example_column_path):
@@ -23,6 +23,7 @@ def test_build_waccm_constituents_return_extinction(example_column_path):
         profiles, ALT_GRID_M, return_extinction=True, truth_wavelengths_nm=wavelengths
     )
     assert "aerosol_accum_extinction_per_m" in true_ext
+    assert "aerosol_aitken_extinction_per_m" in true_ext
     assert "aerosol_coarse_extinction_per_m" in true_ext
     assert true_ext["aerosol_accum_extinction_per_m"].shape == (len(wavelengths), len(ALT_GRID_M))
     assert np.all(true_ext["aerosol_accum_extinction_per_m"] >= 0.0)
@@ -31,7 +32,7 @@ def test_build_waccm_constituents_return_extinction(example_column_path):
     # args ExtinctionScatterer was built with, exposed so a saved column
     # can rebuild an equivalent constituent without calling this function
     # again (see cesm_hawc.save_inputs).
-    for mode in ("aerosol_accum", "aerosol_coarse"):
+    for mode in ("aerosol_accum", "aerosol_aitken", "aerosol_coarse"):
         ref_ext = true_ext[f"{mode}_reference_extinction_per_m"]
         radius = true_ext[f"{mode}_median_radius_nm"]
         assert ref_ext.shape == (len(ALT_GRID_M),)

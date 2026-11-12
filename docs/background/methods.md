@@ -54,28 +54,29 @@ vapour is saved with each column but is not passed to the simulator.
 
 ## Sulfate aerosol
 
-Two MAM4 modes are used: accumulation (`_a1`) and coarse (`_a3`). The
-Aitken mode (`_a2`) is not used.
+All three MAM4 sulfate modes are used: accumulation (`_a1`), Aitken (`_a2`)
+and coarse (`_a3`).
 
 | Mode | Constituent | Geometric standard deviation $\sigma_g$ |
 |------|-------------|---------------------------|
 | Accumulation, `_a1` | `aerosol_accum` | 1.6 |
+| Aitken, `_a2` | `aerosol_aitken` | 1.6 |
 | Coarse, `_a3` | `aerosol_coarse` | 1.2 (Mills et al., 2016) |
 
 ### Number and median radius
 
 For each level, the number concentration $N$ is the mode's number mixing
-ratio (`num_a1`, `num_a3`) times the air density, which is computed from the
+ratio (`num_a1`, `num_a2`, `num_a3`) times the air density, which is computed from the
 level's pressure and temperature. $N$ is floored at 1 m⁻³.
 
 The lognormal median radius $r_m$ is half of CESM's wet median diameter for
-the mode (`dgnumwet1`, `dgnumwet3`). These include the water the particles
+the mode (`dgnumwet1`, `dgnumwet2`, `dgnumwet3`). These include the water the particles
 take up, so they describe the hydrated sulfuric-acid droplets the Mie
 calculations below assume, and they are the sizes CESM's own aerosol optics
 use. $r_m$ is floored at 1 nm.
 
 If a history file has no wet diameters, $r_m$ is instead derived from the
-mode's dry sulfate mass mixing ratio (`so4_a1`, `so4_a3`) and number, using
+mode's dry sulfate mass mixing ratio (`so4_a1`, `so4_a2`, `so4_a3`) and number, using
 the lognormal mass moment
 
 $$
@@ -85,7 +86,7 @@ $$
 with $\rho = 1600$ kg m⁻³. This ignores water uptake, so it underestimates
 the wet radius. cesm-hawc warns when
 it falls back to this method, and records which method was used in saved
-files (`radius_source_a1`, `radius_source_a3`).
+files (`radius_source_a1`, `radius_source_a2`, `radius_source_a3`).
 
 ### Extinction
 
@@ -121,7 +122,7 @@ every wavelength.
 `hawcsimulator`'s default atmosphere contains Rayleigh scattering, MIPAS
 standard ozone, solar irradiance and a Lambertian surface with albedo 0.3.
 cesm-hawc replaces the MIPAS ozone with WACCM ozone and adds WACCM NO₂ and
-the two sulfate modes. No other WACCM fields enter the radiative transfer.
+the three sulfate modes. No other WACCM fields enter the radiative transfer.
 
 The L2 retrieval knows nothing about this simulated atmosphere. It retrieves
 a single lognormal aerosol mode with $\sigma_g = 1.6$ (`aliprocessing`), and

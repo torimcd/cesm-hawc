@@ -14,6 +14,7 @@ def test_get_column_profiles_shape(synthetic_waccm_file):
         "altitudes_m", "pressure_pa", "temperature_k", "specific_humidity",
         "vmr_o3", "vmr_no2", "vmr_h2o", "vmr_so2", "n_air_cm3",
         "sulfate_a1_N_cm3", "sulfate_a1_r_um", "sulfate_a1_sigma",
+        "sulfate_a2_N_cm3", "sulfate_a2_r_um", "sulfate_a2_sigma",
         "sulfate_a3_N_cm3", "sulfate_a3_r_um", "sulfate_a3_sigma",
     }
     assert expected_keys <= profiles.keys()

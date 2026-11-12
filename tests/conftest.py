@@ -26,6 +26,7 @@ def load_profiles_dict(nc_path) -> dict:
     for name, da in ds.data_vars.items():
         profiles[name] = da.values
     profiles["sulfate_a1_sigma"] = float(ds.attrs.get("sigma_a1", 1.6))
+    profiles["sulfate_a2_sigma"] = float(ds.attrs.get("sigma_a2", 1.6))
     profiles["sulfate_a3_sigma"] = float(ds.attrs.get("sigma_a3", 1.2))
     ds.close()
     return profiles
@@ -56,8 +57,10 @@ def synthetic_waccm_file(tmp_path) -> Path:
     H2O = np.linspace(1e-6, 3e-6, nlev).reshape(1, nlev, 1, 1) * np.ones(shape4)
     SO2 = np.full(shape4, 1e-11)
     so4_a1 = np.full(shape4, 1e-10)
+    so4_a2 = np.full(shape4, 2e-11)
     so4_a3 = np.full(shape4, 5e-11)
     num_a1 = np.full(shape4, 1e6)
+    num_a2 = np.full(shape4, 2e6)
     num_a3 = np.full(shape4, 5e5)
 
     ds = xr.Dataset(
@@ -70,8 +73,10 @@ def synthetic_waccm_file(tmp_path) -> Path:
             "H2O": (("time", "lev", "lat", "lon"), H2O),
             "SO2": (("time", "lev", "lat", "lon"), SO2),
             "so4_a1": (("time", "lev", "lat", "lon"), so4_a1),
+            "so4_a2": (("time", "lev", "lat", "lon"), so4_a2),
             "so4_a3": (("time", "lev", "lat", "lon"), so4_a3),
             "num_a1": (("time", "lev", "lat", "lon"), num_a1),
+            "num_a2": (("time", "lev", "lat", "lon"), num_a2),
             "num_a3": (("time", "lev", "lat", "lon"), num_a3),
         },
         coords={

@@ -3,7 +3,7 @@
 ``hawcsimulator``'s default atmosphere contains Rayleigh scattering, MIPAS
 climatological ozone, solar irradiance and a Lambertian surface with albedo
 0.3. :func:`build_waccm_constituents` returns WACCM ozone (replacing the
-MIPAS ozone), WACCM NO2 and the two MAM4 sulfate modes, to be passed to
+MIPAS ozone), WACCM NO2 and the three MAM4 sulfate modes, to be passed to
 ``simulator.run()`` under the ``constituents`` key::
 
     constituents = build_waccm_constituents(profiles, alt_grid_m)
@@ -14,7 +14,7 @@ simulator's atmosphere step and the aerosol is silently dropped.
 
 Each sulfate mode is an ``ExtinctionScatterer`` backed by its own Mie
 database, built for a lognormal size distribution with that mode's width
-(``sigma_g`` = 1.6 for accumulation, 1.2 for coarse) and the H2SO4
+(``sigma_g`` = 1.6 for accumulation and Aitken, 1.2 for coarse) and the H2SO4
 refractive index. ``sasktran2`` integrates over the size distribution, and
 the same database supplies extinction and phase function at every
 wavelength. The L2 retrieval separately assumes a single mode with
@@ -25,6 +25,8 @@ Requires the ``[sim]`` extra.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 try:
@@ -33,7 +35,7 @@ except ImportError as e:
     raise ImportError("sasktran2 must be installed: pip install cesm-hawc[sim]") from e
 
 
-_MODE_WIDTHS = {"aerosol_accum": 1.6, "aerosol_coarse": 1.2}
+_MODE_WIDTHS = {"aerosol_accum": 1.6, "aerosol_aitken": 1.6, "aerosol_coarse": 1.2}
 _WAVELENGTHS_NM = np.array([470, 525, 745, 869, 1020, 1230, 1450, 1500, 1560,
                              1750, 2000, 2250, 2500])
 _MEDIAN_RADIUS_NM = np.arange(10, 600, 10.0)
@@ -76,8 +78,8 @@ def get_mode_mie_database(mode_width: float):
     Parameters
     ----------
     mode_width : float
-        Geometric standard deviation of the mode: 1.6 for accumulation,
-        1.2 for coarse.
+        Geometric standard deviation of the mode: 1.6 for accumulation and
+        Aitken, 1.2 for coarse.
 
     Returns
     -------
@@ -160,12 +162,12 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
     Returns
     -------
     constituents : dict
-        ``o3`` and ``no2`` (``VMRAltitudeAbsorber``) and ``aerosol_accum``
-        and ``aerosol_coarse`` (``ExtinctionScatterer``, from ``so4_a1`` and
-        ``so4_a3``).
+        ``o3`` and ``no2`` (``VMRAltitudeAbsorber``) and ``aerosol_accum``,
+        ``aerosol_aitken`` and ``aerosol_coarse`` (``ExtinctionScatterer``,
+        from ``so4_a1``, ``so4_a2`` and ``so4_a3``).
     true_extinction : dict
         Only if ``return_extinction`` is True. For each mode
-        (``aerosol_accum``, ``aerosol_coarse``):
+        (``aerosol_accum``, ``aerosol_aitken``, ``aerosol_coarse``):
 
         - ``{mode}_extinction_per_m``: truth extinction [m⁻¹], shape
           (wavelength, altitude), at ``truth_wavelengths_nm``;
@@ -209,13 +211,19 @@ def build_waccm_constituents(profiles: dict, alt_m: np.ndarray,
         vmr=profiles["vmr_no2"],
     )
 
-    # ── MAM4 bimodal stratospheric sulfate ────────────────────────────────
+    # ── MAM4 stratospheric sulfate: accumulation, Aitken and coarse modes ──
     for name, N_key, r_key in [
         ("aerosol_accum",  "sulfate_a1_N_cm3", "sulfate_a1_r_um"),
+        ("aerosol_aitken", "sulfate_a2_N_cm3", "sulfate_a2_r_um"),
         ("aerosol_coarse", "sulfate_a3_N_cm3", "sulfate_a3_r_um"),
     ]:
-        N_cm3 = profiles[N_key]
-        r_um  = profiles[r_key]
+        if N_key in profiles:
+            N_cm3 = profiles[N_key]
+            r_um  = profiles[r_key]
+        else:
+            warnings.warn(f"'{N_key}' not in profiles; {name} has no particles.")
+            N_cm3 = np.zeros_like(profiles["altitudes_m"], dtype=float)
+            r_um  = np.full_like(N_cm3, 0.1)
         r_nm_raw = r_um * 1e3
 
         mode_db = _get_mode_db(_MODE_WIDTHS[name])

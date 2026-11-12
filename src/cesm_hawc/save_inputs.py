@@ -50,7 +50,7 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
     :meth:`~cesm_hawc.waccm.WACCMAtmosphere.get_column_profiles` on the
     ``altitude_m`` dimension. When ``sasktran2`` is installed and
     ``profiles_only`` is False, it also holds, for each mode
-    (``aerosol_accum``, ``aerosol_coarse``):
+    (``aerosol_accum``, ``aerosol_aitken``, ``aerosol_coarse``):
 
     - ``{mode}_extinction_per_m`` (``wavelength_nm``, ``altitude_m``):
       truth extinction [m⁻¹];
@@ -61,7 +61,7 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
 
     plus the attributes needed to rebuild the Mie databases:
     ``extinction_reference_wavelength_nm``, ``mode_width_accum``,
-    ``mode_width_coarse``, ``mie_refractive_index``,
+    ``mode_width_aitken``, ``mode_width_coarse``, ``mie_refractive_index``,
     ``mie_wavelength_grid_nm`` and ``mie_median_radius_grid_nm``. The
     ``includes_constituents`` attribute (0 or 1) records which kind of file
     it is.
@@ -78,8 +78,10 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         "longitude": float(lon),
         "time_index": int(time_index),
         "sigma_a1": profiles.get("sulfate_a1_sigma", 1.6),
+        "sigma_a2": profiles.get("sulfate_a2_sigma", 1.6),
         "sigma_a3": profiles.get("sulfate_a3_sigma", 1.2),
         "radius_source_a1": profiles.get("sulfate_a1_radius_source", "unknown"),
+        "radius_source_a2": profiles.get("sulfate_a2_radius_source", "unknown"),
         "radius_source_a3": profiles.get("sulfate_a3_radius_source", "unknown"),
         "description": "WACCM column profile + simulator constituents input from cesm-hawc",
     }
@@ -124,6 +126,7 @@ def save_column_inputs(waccm, lat: float, lon: float, output_path: str,
         attrs.update({
             "extinction_reference_wavelength_nm": 745.0,
             "mode_width_accum": _MODE_WIDTHS["aerosol_accum"],
+            "mode_width_aitken": _MODE_WIDTHS["aerosol_aitken"],
             "mode_width_coarse": _MODE_WIDTHS["aerosol_coarse"],
             "mie_refractive_index": "H2SO4",
             "mie_wavelength_grid_nm": _WAVELENGTHS_NM.tolist(),

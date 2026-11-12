@@ -81,6 +81,7 @@ def test_l1b_image_to_dataset_with_true_extinction(synthetic_waccm_file):
     assert ds["aerosol_accum_extinction_per_m"].dims == ("wavelength", "altitude_m")
     assert ds["aerosol_accum_extinction_per_m_atm"].dims == ("wavelength", "atm_altitude_m")
     assert ds["aerosol_coarse_extinction_per_m"].dims == ("wavelength", "altitude_m")
+    assert ds["aerosol_aitken_extinction_per_m"].dims == ("wavelength", "altitude_m")
     # the per-altitude-only entries aren't wavelength-resolved and must not
     # have been attached here (they're for cesm_hawc.save_inputs instead)
     assert "aerosol_accum_reference_extinction_per_m" not in ds.data_vars

@@ -3,6 +3,16 @@
 All notable changes to cesm-hawc are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- The MAM4 Aitken sulfate mode (`so4_a2`, `num_a2`, `dgnumwet2`) is now
+  included in the truth extinction, the saved column inputs and the saved
+  profiles (`sulfate_a2_*`). It has σg = 1.6, as the accumulation mode.
+  Files without `so4_a2` or `num_a2` treat the Aitken mode as having no
+  particles, with a warning.
+
 ## 0.3.0 — 2026-10-24
 
 First public release. Changes since 0.2.0:

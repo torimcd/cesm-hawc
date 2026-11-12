@@ -1,17 +1,18 @@
 """Read CESM2/WACCM history files and extract atmospheric columns.
 
 Columns are interpolated onto a regular altitude grid, with the MAM4
-accumulation and coarse sulfate modes described by lognormal number and
+accumulation, Aitken and coarse sulfate modes described by lognormal number and
 median radius. Tested with the BWSSP245 and TSMLT compsets (MAM4 aerosol).
 The history file needs:
 
 - ``T``, ``Q``, ``PS``, ``hyam``, ``hybm``: required;
 - ``O3``, ``NO2``, ``H2O``, ``SO2``: gas mixing ratios [mol/mol];
-- ``so4_a1``, ``so4_a3``: dry sulfate mass mixing ratios [kg/kg];
-- ``num_a1``, ``num_a3``: aerosol number mixing ratios [#/kg];
-- ``dgnumwet1``, ``dgnumwet3``: wet median diameters [m], giving the median
-  radius including water uptake. Without them the radius is derived from
-  dry sulfate mass (see :func:`mam4_lognormal`), which ignores water.
+- ``so4_a1``, ``so4_a2``, ``so4_a3``: dry sulfate mass mixing ratios [kg/kg];
+- ``num_a1``, ``num_a2``, ``num_a3``: aerosol number mixing ratios [#/kg];
+- ``dgnumwet1``, ``dgnumwet2``, ``dgnumwet3``: wet median diameters [m],
+  giving the median radius including water uptake. Without them the radius
+  is derived from dry sulfate mass (see :func:`mam4_lognormal`), which
+  ignores water.
 
 Attributes
 ----------
@@ -47,7 +48,7 @@ M_AIR = 0.028966      # kg mol⁻¹    mean molar mass of dry air
 M_H2O = 0.018015      # kg mol⁻¹    molar mass of water
 
 # Particle density [kg m⁻³] for deriving radius from dry sulfate mass; used
-# only when the file has no wet diameters (dgnumwet1/dgnumwet3).
+# only when the file has no wet diameters (dgnumwet1/2/3).
 RHO_SULFATE = 1600.0
 
 # MAM4 modal sigma_g values for WACCM/BWSSP245
@@ -59,9 +60,9 @@ MAM4_SIGMA = {"a1": 1.6, "a2": 1.6, "a3": 1.2}
 # RECOMMENDED_VARS: everything _check_required_vars() warns about if missing.
 REQUIRED_VARS = {"T", "Q", "PS", "hyam", "hybm"}
 SCIENCE_CRITICAL_VARS = ["O3", "so4_a1", "so4_a3", "num_a1", "num_a3"]
-RECOMMENDED_VARS = ["NO2", "H2O", "SO2"] + SCIENCE_CRITICAL_VARS
+RECOMMENDED_VARS = ["NO2", "H2O", "SO2", "so4_a2", "num_a2"] + SCIENCE_CRITICAL_VARS
 # Wet median diameter of each sulfate mode [m].
-WET_DIAMETER_VARS = {"a1": "dgnumwet1", "a3": "dgnumwet3"}
+WET_DIAMETER_VARS = {"a1": "dgnumwet1", "a2": "dgnumwet2", "a3": "dgnumwet3"}
 
 
 # ── Atmospheric physics helpers ────────────────────────────────────────────
@@ -351,16 +352,16 @@ class WACCMAtmosphere:
             - ``vmr_h2o`` [mol/mol]: blended from ``Q`` and ``H2O`` (see
               :func:`blend_h2o`);
             - ``n_air_cm3`` [cm⁻³]: air number density;
-            - ``sulfate_a1_N_cm3``, ``sulfate_a3_N_cm3`` [cm⁻³]:
-              accumulation and coarse mode number;
-            - ``sulfate_a1_r_um``, ``sulfate_a3_r_um`` [μm]: accumulation
-              and coarse mode wet median radius (see Notes);
-            - ``sulfate_a1_dry_mass_kg_m3``, ``sulfate_a3_dry_mass_kg_m3``
-              [kg m⁻³]: dry sulfate mass concentration;
-            - ``sulfate_a1_sigma``, ``sulfate_a3_sigma`` (float): each
-              mode's geometric standard deviation;
-            - ``sulfate_a1_radius_source``, ``sulfate_a3_radius_source``
-              (str): ``"wet_diameter"`` or ``"dry_mass"`` (see Notes).
+            - ``sulfate_a{1,2,3}_N_cm3`` [cm⁻³]: accumulation, Aitken and
+              coarse mode number;
+            - ``sulfate_a{1,2,3}_r_um`` [μm]: accumulation, Aitken and
+              coarse mode wet median radius (see Notes);
+            - ``sulfate_a{1,2,3}_dry_mass_kg_m3`` [kg m⁻³]: dry sulfate mass
+              concentration;
+            - ``sulfate_a{1,2,3}_sigma`` (float): each mode's geometric
+              standard deviation;
+            - ``sulfate_a{1,2,3}_radius_source`` (str): ``"wet_diameter"``
+              or ``"dry_mass"`` (see Notes).
 
         Notes
         -----
@@ -369,7 +370,8 @@ class WACCMAtmosphere:
         aerosol number and mass are interpolated in log space.
 
         Each mode's median radius is half its wet median diameter
-        (``dgnumwet1``, ``dgnumwet3``) when the file has it. Otherwise it is
+        (``dgnumwet1``, ``dgnumwet2``, ``dgnumwet3``) when the file has it.
+        Otherwise it is
         derived from dry sulfate mass and number with :func:`mam4_lognormal`,
         which ignores water uptake and so underestimates the wet radius the
         optical calculations assume.
@@ -428,6 +430,7 @@ class WACCMAtmosphere:
                     "sigma_g": MAM4_SIGMA[suffix], "radius_source": source}
 
         a1 = sulfate_mode("a1")
+        a2 = sulfate_mode("a2")
         a3 = sulfate_mode("a3")
 
         gi = self._interp
@@ -446,6 +449,11 @@ class WACCMAtmosphere:
             "sulfate_a1_dry_mass_kg_m3": gi(altitude, a1["dry_mass"], log=True),
             "sulfate_a1_sigma":  a1["sigma_g"],
             "sulfate_a1_radius_source": a1["radius_source"],
+            "sulfate_a2_N_cm3":  gi(altitude, a2["N_cm3"],        log=True),
+            "sulfate_a2_r_um":   gi(altitude, a2["r_um"],         log=False),
+            "sulfate_a2_dry_mass_kg_m3": gi(altitude, a2["dry_mass"], log=True),
+            "sulfate_a2_sigma":  a2["sigma_g"],
+            "sulfate_a2_radius_source": a2["radius_source"],
             "sulfate_a3_N_cm3":  gi(altitude, a3["N_cm3"],        log=True),
             "sulfate_a3_r_um":   gi(altitude, a3["r_um"],         log=False),
             "sulfate_a3_dry_mass_kg_m3": gi(altitude, a3["dry_mass"], log=True),
@@ -587,8 +595,10 @@ class WACCMAtmosphere:
                 "longitude":   float(lon),
                 "time_index":  int(time_index),
                 "sigma_a1":    scalars.get("sulfate_a1_sigma", 1.6),
+                "sigma_a2":    scalars.get("sulfate_a2_sigma", 1.6),
                 "sigma_a3":    scalars.get("sulfate_a3_sigma", 1.2),
                 "radius_source_a1": scalars.get("sulfate_a1_radius_source", "unknown"),
+                "radius_source_a2": scalars.get("sulfate_a2_radius_source", "unknown"),
                 "radius_source_a3": scalars.get("sulfate_a3_radius_source", "unknown"),
                 "description": "WACCM column profiles from cesm-hawc",
             }
@@ -613,7 +623,8 @@ class WACCMAtmosphere:
                  "so4_a1", "so4_a2", "so4_a3",
                  "num_a1", "num_a2", "num_a3",
                  "soa1_a1", "soa2_a1", "soa3_a1", "soa4_a1", "soa5_a1"]
-        critical = {"so4_a1", "so4_a3", "num_a1", "num_a3", "SO2", "H2O", "O3"}
+        critical = {"so4_a1", "so4_a2", "so4_a3", "num_a1", "num_a2", "num_a3",
+                    "SO2", "H2O", "O3"}
         present  = [v for v in known if v in self.ds]
         print("Variables found in file:")
         for v in present:

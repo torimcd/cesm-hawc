@@ -16,21 +16,21 @@ Every file contains the extracted WACCM profile on `altitude_m` [m]:
 | `vmr_o3`, `vmr_no2`, `vmr_so2` | mol/mol | Gas volume mixing ratios |
 | `vmr_h2o` | mol/mol | Water vapour, blended from `Q` and chemistry `H2O` |
 | `n_air_cm3` | cm⁻³ | Air number density |
-| `sulfate_a1_N_cm3`, `sulfate_a3_N_cm3` | cm⁻³ | Accumulation / coarse mode number concentration |
-| `sulfate_a1_r_um`, `sulfate_a3_r_um` | μm | Accumulation / coarse mode wet median radius |
-| `sulfate_a1_dry_mass_kg_m3`, `sulfate_a3_dry_mass_kg_m3` | kg m⁻³ | Accumulation / coarse mode dry sulfate mass concentration |
+| `sulfate_a{1,2,3}_N_cm3` | cm⁻³ | Accumulation / Aitken / coarse mode number concentration |
+| `sulfate_a{1,2,3}_r_um` | μm | Accumulation / Aitken / coarse mode wet median radius |
+| `sulfate_a{1,2,3}_dry_mass_kg_m3` | kg m⁻³ | Accumulation / Aitken / coarse mode dry sulfate mass concentration |
 
 with attributes `latitude`, `longitude`, `time_index`, `sigma_a1`,
-`sigma_a3`, `time` (the observation time), and `radius_source_a1` and
-`radius_source_a3`: `"wet_diameter"` if the radius came from CESM's wet
+`sigma_a2`, `sigma_a3`, `time` (the observation time), and `radius_source_a1`,
+`radius_source_a2` and `radius_source_a3`: `"wet_diameter"` if the radius came from CESM's wet
 diameter, `"dry_mass"` if it was derived from dry sulfate mass (see
 [Methods](../background/methods.md#number-and-median-radius)). Files from `orbit` mode also
 record the satellite position as `observer_latitude`, `observer_longitude`
 [degrees] and `observer_altitude` [m].
 
 When `sasktran2` was installed at save time (and `--profiles-only` was not
-used), the file also holds, for each mode `aerosol_accum` and
-`aerosol_coarse`:
+used), the file also holds, for each mode `aerosol_accum`, `aerosol_aitken`
+and `aerosol_coarse`:
 
 | Variable | Dims | Description |
 |----------|------|-------------|
@@ -62,7 +62,9 @@ alt_m = ds["altitude_m"].values
 
 
 def mode_constituent(mode: str) -> sk.constituent.ExtinctionScatterer:
-    width_key = "mode_width_accum" if mode == "aerosol_accum" else "mode_width_coarse"
+    width_key = {"aerosol_accum": "mode_width_accum",
+                 "aerosol_aitken": "mode_width_aitken",
+                 "aerosol_coarse": "mode_width_coarse"}[mode]
     mode_db = sk.database.MieDatabase(
         sk.mie.distribution.LogNormalDistribution().freeze(mode_width=ds.attrs[width_key]),
         sk.mie.refractive.H2SO4(),          # ds.attrs["mie_refractive_index"]
@@ -82,6 +84,7 @@ constituents = {
     "o3": sk.constituent.VMRAltitudeAbsorber(sk.optical.O3DBM(), altitudes_m=alt_m, vmr=ds["vmr_o3"].values),
     "no2": sk.constituent.VMRAltitudeAbsorber(sk.optical.NO2Vandaele(), altitudes_m=alt_m, vmr=ds["vmr_no2"].values),
     "aerosol_accum": mode_constituent("aerosol_accum"),
+    "aerosol_aitken": mode_constituent("aerosol_aitken"),
     "aerosol_coarse": mode_constituent("aerosol_coarse"),
 }
 

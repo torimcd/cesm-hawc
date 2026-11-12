@@ -13,9 +13,9 @@ Add any missing variables to `fincl` in `user_nl_cam` before running WACCM.
 | `P0` | Pa | Reference pressure | Warning; 100 000 Pa assumed |
 | `O3` | mol/mol | Ozone, used in the simulation | Warning; treated as zero |
 | `NO2` | mol/mol | NO₂, used in the simulation | Warning; treated as zero |
-| `so4_a1`, `so4_a3` | kg/kg | Accumulation / coarse mode dry sulfate mass mixing ratio | Warning; the whole mode is left out of the simulation |
-| `num_a1`, `num_a3` | #/kg | Accumulation / coarse mode number mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
-| `dgnumwet1`, `dgnumwet3` | m | Accumulation / coarse mode wet median diameter, giving the particle size used in the simulation | Warning; the radius is derived from dry sulfate mass instead, which ignores water uptake |
+| `so4_a1`, `so4_a2`, `so4_a3` | kg/kg | Accumulation / Aitken / coarse mode dry sulfate mass mixing ratio | Warning; the whole mode is left out of the simulation |
+| `num_a1`, `num_a2`, `num_a3` | #/kg | Accumulation / Aitken / coarse mode number mixing ratio, used in the simulation | Warning; the whole mode is left out of the simulation |
+| `dgnumwet1`, `dgnumwet2`, `dgnumwet3` | m | Accumulation / Aitken / coarse mode wet median diameter, giving the particle size used in the simulation | Warning; the radius is derived from dry sulfate mass instead, which ignores water uptake |
 | `H2O` | mol/mol | Chemistry water vapour, saved with the column only | Warning; `Q` is used throughout |
 | `SO2` | mol/mol | Gas-phase SO₂, saved with the column only | Warning; treated as zero |
 
@@ -25,8 +25,8 @@ doesn't use them.
 ## Example fincl addition in user_nl_cam
 
 ```
-fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a3', 'num_a1', 'num_a3',
-         'dgnumwet1', 'dgnumwet3'
+fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a2', 'so4_a3', 'num_a1',
+         'num_a2', 'num_a3', 'dgnumwet1', 'dgnumwet2', 'dgnumwet3'
 ```
 
 ## MAM4 mode parameters (WACCM/BWSSP245)
@@ -34,7 +34,7 @@ fincl1 = 'O3', 'NO2', 'H2O', 'SO2', 'so4_a1', 'so4_a3', 'num_a1', 'num_a3',
 | Mode | Suffix | σ_g | Description |
 |------|--------|-----|-------------|
 | Accumulation | `_a1` | 1.6 | Accumulation-mode sulfate |
-| Aitken | `_a2` | 1.6 | Minor contribution (not used) |
+| Aitken | `_a2` | 1.6 | Aitken-mode sulfate |
 | Coarse | `_a3` | 1.2 | Coarse-mode sulfate |
 
 > **Note:** σ_g = 1.6 for the accumulation mode and σ_g = 1.2 for the coarse

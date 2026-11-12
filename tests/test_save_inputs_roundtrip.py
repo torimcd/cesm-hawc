@@ -51,7 +51,9 @@ def _native_constituents(path) -> dict:
     alt_m = ds["altitude_m"].values
 
     def mode_constituent(mode: str):
-        width_key = "mode_width_accum" if mode == "aerosol_accum" else "mode_width_coarse"
+        width_key = {"aerosol_accum": "mode_width_accum",
+                     "aerosol_aitken": "mode_width_aitken",
+                     "aerosol_coarse": "mode_width_coarse"}[mode]
         mode_db = sk.database.MieDatabase(
             sk.mie.distribution.LogNormalDistribution().freeze(mode_width=ds.attrs[width_key]),
             sk.mie.refractive.H2SO4(),
@@ -72,6 +74,7 @@ def _native_constituents(path) -> dict:
         "no2": sk.constituent.VMRAltitudeAbsorber(
             sk.optical.NO2Vandaele(), altitudes_m=alt_m, vmr=ds["vmr_no2"].values),
         "aerosol_accum": mode_constituent("aerosol_accum"),
+        "aerosol_aitken": mode_constituent("aerosol_aitken"),
         "aerosol_coarse": mode_constituent("aerosol_coarse"),
     }
 

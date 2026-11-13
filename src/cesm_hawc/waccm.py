@@ -478,14 +478,15 @@ class WACCMAtmosphere:
         Returns
         -------
         dict
-            - ``burden_mg_m2`` [mg m⁻²]: dry sulfate burden of both modes;
-            - ``N_column_cm2`` [cm⁻²]: number column;
-            - ``peak_alt_km`` [km]: altitude of the peak number
-              concentration;
+            - ``burden_mg_m2`` [mg m⁻²]: dry sulfate burden of the
+              accumulation, Aitken and coarse modes;
+            - ``N_column_cm2`` [cm⁻²]: number column of all three modes;
+            - ``peak_alt_km`` [km]: altitude of the peak total dry sulfate
+              mass concentration;
             - ``peak_r_um`` [μm]: dominant mode's median radius at the peak;
-            - ``dominant_mode`` (str): ``"a1"`` or ``"a3"``, whichever has
-              more particles at the peak; ``"none"`` if no grid level is in
-              range.
+            - ``dominant_mode`` (str): ``"a1"``, ``"a2"`` or ``"a3"``,
+              whichever has the most dry sulfate mass at the peak; ``"none"``
+              if no grid level is in range.
         """
         p    = self.get_column_profiles(lat, lon, time_index)
         alt  = p["altitudes_m"]
@@ -497,16 +498,16 @@ class WACCMAtmosphere:
                     "peak_alt_km": 0.0, "peak_r_um": 0.0,
                     "dominant_mode": "none"}
 
+        modes = ("a1", "a2", "a3")
         dz = np.gradient(alt)
-        mass = p["sulfate_a1_dry_mass_kg_m3"] + p["sulfate_a3_dry_mass_kg_m3"]
+        mass = sum(p[f"sulfate_{m}_dry_mass_kg_m3"] for m in modes)
 
         burden  = np.sum((mass * dz)[mask]) * 1e6        # kg m⁻² → mg m⁻²
-        N_total = p["sulfate_a1_N_cm3"] + p["sulfate_a3_N_cm3"]
+        N_total = sum(p[f"sulfate_{m}_N_cm3"] for m in modes)
         N_col   = np.sum((N_total * dz * 100.0)[mask])   # cm⁻³·m → cm⁻²
 
-        peak_idx = np.argmax(N_total * mask)
-        dominant = ("a3" if p["sulfate_a3_N_cm3"][peak_idx]
-                          > p["sulfate_a1_N_cm3"][peak_idx] else "a1")
+        peak_idx = np.argmax(mass * mask)
+        dominant = max(modes, key=lambda m: p[f"sulfate_{m}_dry_mass_kg_m3"][peak_idx])
 
         return {
             "burden_mg_m2":  burden,

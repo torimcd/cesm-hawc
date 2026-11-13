@@ -164,7 +164,8 @@ placed on the simulated model dates:
 ## Sulfate burden
 
 `WACCMAtmosphere.sulfate_column_burden` integrates the dry sulfate mass
-concentration of both modes (the `so4` mass mixing ratios times air density)
+concentration of the accumulation, Aitken and coarse modes (the `so4` mass
+mixing ratios times air density)
 between 15 and 35 km, giving the burden in mg m⁻². `fixed` mode
 reports it in each file's `summary.txt`.
 

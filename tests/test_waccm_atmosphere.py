@@ -61,7 +61,7 @@ def test_sulfate_column_burden(synthetic_waccm_file):
     atm = WACCMAtmosphere(str(synthetic_waccm_file), alt_grid_km=np.arange(0.0, 65.001, 1.0))
     burden = atm.sulfate_column_burden(lat=30.6, lon=180.0, time_index=0)
     assert burden["burden_mg_m2"] >= 0.0
-    assert burden["dominant_mode"] in ("a1", "a3", "none")
+    assert burden["dominant_mode"] in ("a1", "a2", "a3", "none")
 
 
 def test_save_and_extract_cesm_extinction_roundtrip(tmp_path, synthetic_waccm_file):

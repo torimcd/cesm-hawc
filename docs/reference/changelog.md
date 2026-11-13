@@ -13,6 +13,12 @@ All notable changes to cesm-hawc are listed here. The format follows
   Files without `so4_a2` or `num_a2` treat the Aitken mode as having no
   particles, with a warning.
 
+### Changed
+
+- `run --mode orbit` with `run_l2 = true` deletes the per-profile
+  `l2_profiles/*.nc` files once `l2_retrieval.nc` has been written and
+  checked.
+
 ## 0.3.0 — 2026-10-24
 
 First public release. Changes since 0.2.0:

@@ -27,6 +27,7 @@ cannot pickle a nested function.
 from __future__ import annotations
 
 import argparse
+import glob
 import logging
 import os
 import sys
@@ -369,6 +370,35 @@ def _safe_time_str(t) -> str:
     return str(pd.Timestamp(t)).replace(" ", "T").replace(":", "")
 
 
+def _write_l2_consolidated(ds, path: str, n_profiles: int) -> None:
+    """Write the consolidated L2 file, replacing ``path`` only once it is complete.
+
+    Raises
+    ------
+    ValueError
+        If the written file does not hold ``n_profiles`` profiles along
+        ``along_track``.
+    """
+    import xarray as xr
+
+    tmp_path = path + ".tmp"
+    ds.to_netcdf(tmp_path)
+    with xr.open_dataset(tmp_path) as check:
+        n_written = check.sizes.get("along_track", 0)
+    if n_written != n_profiles:
+        os.remove(tmp_path)
+        raise ValueError(f"{path}: wrote {n_written} profiles, expected {n_profiles}")
+    os.replace(tmp_path, path)
+
+
+def _remove_l2_profiles(profile_dir: str, case_name: str) -> None:
+    """Delete a case's per-profile L2 files, and the directory if it is then empty."""
+    for path in glob.glob(os.path.join(profile_dir, f"{glob.escape(case_name)}_*.nc")):
+        os.remove(path)
+    if os.path.isdir(profile_dir) and not os.listdir(profile_dir):
+        os.rmdir(profile_dir)
+
+
 def _run_orbit_job(label: str, observations: list[dict], case_name: str, h2_path: str,
                    out_root: str, time_index: int, alt_grid_m: np.ndarray,
                    wavelengths_nm: np.ndarray, run_l2: bool, strip_ozone: bool = False) -> str:
@@ -377,8 +407,9 @@ def _run_orbit_job(label: str, observations: list[dict], case_name: str, h2_path
     Forward model only, or with the L2 retrieval for every observation when
     ``run_l2`` is True (minutes per profile). With L2, finished profiles are
     recorded in a diagnostics CSV and saved individually as they complete,
-    so a re-run resumes within the job (see :mod:`cesm_hawc.resume`). All
-    output goes under ``out_root/case_name/label/``.
+    so a re-run resumes within the job (see :mod:`cesm_hawc.resume`). Once
+    they are all written to ``l2_retrieval.nc``, the individual files are
+    deleted. All output goes under ``out_root/case_name/label/``.
     """
     import contextlib
     import io
@@ -507,7 +538,9 @@ def _run_orbit_job(label: str, observations: list[dict], case_name: str, h2_path
                 l2_curtain = xr.concat(l2_results, dim="along_track").assign_coords(
                     lat=("along_track", lats), lon=("along_track", lons), time=("along_track", times)
                 )
-                l2_curtain.to_netcdf(os.path.join(case_out, "l2_retrieval.nc"))
+                _write_l2_consolidated(l2_curtain, os.path.join(case_out, "l2_retrieval.nc"),
+                                       len(l2_results))
+                _remove_l2_profiles(os.path.join(case_out, "l2_profiles"), case_name)
             except Exception:
                 log.error("[%s] failed to concat/save l2_retrieval.nc for case %s "
                           "(per-profile l2_profiles/*.nc are still on disk):\n%s",

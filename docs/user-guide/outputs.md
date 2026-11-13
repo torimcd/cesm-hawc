@@ -35,7 +35,7 @@ Per job, under `<date>/`:
 | `curtain.nc` | The `l1b.nc` contents above for every observation, along a new `along_track` dimension with `lat`, `lon` and `time` coordinates |
 | `orbit_track.csv` | Time, latitude and longitude of every successful observation |
 | `l2_retrieval.nc` | L2 output concatenated along the track (`run_l2 = true` only) |
-| `l2_profiles/<case>_<time>.nc` | One L2 file per observation, written as each finishes (`run_l2 = true` only) |
+| `l2_profiles/<case>_<time>.nc` | One L2 file per observation, written as each finishes and deleted once `l2_retrieval.nc` is written; kept if writing `l2_retrieval.nc` fails (`run_l2 = true` only) |
 | `l2_diagnostics.csv` | Per-observation convergence, function evaluations, cost, runtime and errors (`run_l2 = true` only) |
 
 An `.orbit_day_index_cache.json` file in `out_dir` caches the orbit-file

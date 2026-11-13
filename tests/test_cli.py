@@ -147,3 +147,59 @@ def test_build_orbit_subdaily_jobs_nearest_snapshot(tmp_path, monkeypatch):
     assert times("2030-01-08-43200") == [
         pd.Timestamp("2030-01-08 11:00:00"), pd.Timestamp("2030-01-08 23:00:00"),
     ]
+
+
+def _l2_curtain(n: int):
+    import numpy as np
+    import xarray as xr
+
+    times = pd.date_range("2035-01-07T12:00", periods=n, freq="min")
+    return xr.Dataset(
+        {"extinction": (("along_track", "altitude"), np.arange(n * 3.0).reshape(n, 3))},
+        coords={"altitude": [10e3, 20e3, 30e3],
+                "lat": ("along_track", np.linspace(0, 10, n)),
+                "lon": ("along_track", np.linspace(100, 110, n)),
+                "time": ("along_track", times)},
+    )
+
+
+def test_write_l2_consolidated_writes_checked_file(tmp_path):
+    import xarray as xr
+
+    from cesm_hawc.cli import _write_l2_consolidated
+
+    path = str(tmp_path / "l2_retrieval.nc")
+    _write_l2_consolidated(_l2_curtain(3), path, 3)
+    with xr.open_dataset(path) as ds:
+        assert ds.sizes["along_track"] == 3
+    assert not (tmp_path / "l2_retrieval.nc.tmp").exists()
+
+
+def test_write_l2_consolidated_keeps_existing_file_on_count_mismatch(tmp_path):
+    import xarray as xr
+
+    from cesm_hawc.cli import _write_l2_consolidated
+
+    path = str(tmp_path / "l2_retrieval.nc")
+    _write_l2_consolidated(_l2_curtain(2), path, 2)
+    with pytest.raises(ValueError, match="expected 5"):
+        _write_l2_consolidated(_l2_curtain(3), path, 5)
+    with xr.open_dataset(path) as ds:
+        assert ds.sizes["along_track"] == 2
+    assert not (tmp_path / "l2_retrieval.nc.tmp").exists()
+
+
+def test_remove_l2_profiles_removes_only_that_case(tmp_path):
+    from cesm_hawc.cli import _remove_l2_profiles
+
+    profile_dir = tmp_path / "l2_profiles"
+    profile_dir.mkdir()
+    for name in ("caseA_2035-01-07T120000.nc", "caseA_2035-01-07T120100.nc",
+                 "caseAB_2035-01-07T120000.nc"):
+        (profile_dir / name).write_bytes(b"")
+
+    _remove_l2_profiles(str(profile_dir), "caseA")
+    assert sorted(p.name for p in profile_dir.iterdir()) == ["caseAB_2035-01-07T120000.nc"]
+
+    _remove_l2_profiles(str(profile_dir), "caseAB")
+    assert not profile_dir.exists()
